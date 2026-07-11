@@ -1,6 +1,6 @@
 # 01 — Walking skeleton: package scaffold, test fixture, data-prep + tokenizer stages
 
-Status: ready-for-agent
+Status: complete
 
 ## Parent
 

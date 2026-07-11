@@ -1,6 +1,6 @@
 # 12 — Slot Prompt renderer + SFT dataset builder
 
-Status: ready-for-agent
+Status: complete
 
 ## Parent
 
@@ -31,10 +31,10 @@ body and `<|end|>`), producing an artifact per the stage convention.
 
 ## Acceptance criteria
 
-- [ ] A test asserts the rendered token sequence matches the schema exactly: special tokens encode as single IDs, order is fixed, and the loss-mask boundary sits exactly at `<|fable|>`
-- [ ] Renderer→parser round-trip recovers slots and fable body on fixture data
-- [ ] Dataset builder produces a schema-documented artifact from the fixture's sft split via the stage convention, deterministically across two runs
-- [ ] Malformed input handling is defined and tested (missing slot, unexpected token order)
+- [x] A test asserts the rendered token sequence matches the schema exactly: special tokens encode as single IDs, order is fixed, and the loss-mask boundary sits exactly at `<|fable|>`
+- [x] Renderer→parser round-trip recovers slots and fable body on fixture data
+- [x] Dataset builder produces a schema-documented artifact from the fixture's sft split via the stage convention, deterministically across two runs
+- [x] Malformed input handling is defined and tested (missing slot, unexpected token order)
 
 ## Blocked by
 

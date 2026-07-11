@@ -1,6 +1,6 @@
 # 02 — Model + Pretraining stage with checkpoint-resume contract
 
-Status: ready-for-agent
+Status: in-progress — code complete (all criteria met); real Pretraining run underway on a VM since 2026-07-12
 
 ## Parent
 
