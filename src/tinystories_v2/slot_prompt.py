@@ -12,6 +12,10 @@ Loss is masked over the conditioning prefix (through and including
 `<|fable|>`) and active over the fable body and the trailing `<|end|>`.
 """
 
+from dataclasses import dataclass
+
+from tokenizers import Tokenizer
+
 from tinystories_v2.slots import Scaffold
 
 # The six conditioning slots in render order — the first six SLOT_SPECIAL_TOKENS
@@ -51,3 +55,32 @@ def render_example(scaffold: Scaffold, fable: str) -> str:
     if not fable or not fable.strip():
         raise SlotPromptError("fable body is empty")
     return render_prompt(scaffold) + fable + END_TOKEN
+
+
+@dataclass(frozen=True)
+class SlotPromptExample:
+    input_ids: list[int]
+    loss_mask: list[int]   # 0 over the prompt prefix, 1 over body + <|end|>
+    n_prompt_tokens: int   # leading masked tokens (through <|fable|>)
+
+    def to_dict(self) -> dict:
+        return {
+            "input_ids": self.input_ids,
+            "loss_mask": self.loss_mask,
+            "n_prompt_tokens": self.n_prompt_tokens,
+        }
+
+
+def encode_example(
+    tokenizer: Tokenizer, scaffold: Scaffold, fable: str
+) -> SlotPromptExample:
+    """Tokenize a training example and compute its loss mask: masked (0) through
+    and including <|fable|>, active (1) over the fable body and <|end|>."""
+    text = render_example(scaffold, fable)
+    ids = tokenizer.encode(text).ids
+    boundary = ids.index(tokenizer.token_to_id(FABLE_TOKEN))  # <|fable|> once
+    n_prompt_tokens = boundary + 1
+    loss_mask = [0] * n_prompt_tokens + [1] * (len(ids) - n_prompt_tokens)
+    return SlotPromptExample(
+        input_ids=ids, loss_mask=loss_mask, n_prompt_tokens=n_prompt_tokens
+    )
