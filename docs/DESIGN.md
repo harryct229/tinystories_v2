@@ -1,6 +1,7 @@
 # tinystories_v2 — Design
 
-Resolved through a grilling session on 2026-07-11. Decisions with real
+Resolved through a grilling session on 2026-07-11; revised the same day when
+the team upgraded from free-tier Colab to **Colab Pro**. Decisions with real
 trade-offs have ADRs in `docs/adr/`; this document is the single picture of
 the whole plan plus the defaults chosen without ceremony. Vocabulary is
 defined in `CONTEXT.md` (capitalized terms below refer to it).
@@ -8,9 +9,10 @@ defined in `CONTEXT.md` (capitalized terms below refer to it).
 ## Goal
 
 Train a small language model **from scratch** that generates moral Fables
-conditioned on a six-slot Scaffold, aligned with AI feedback (RLAIF), on free
-Colab T4. Academic deliverable: a report that justifies every architecture and
-training choice, with measurable before/after at each stage.
+conditioned on a six-slot Scaffold, aligned with AI feedback (RLAIF), on
+Colab Pro (L4 preferred, T4 fallback). Academic deliverable: a report that
+justifies every architecture and training choice, with measurable
+before/after at each stage.
 
 ## Pipeline (ADR-0001)
 
@@ -60,11 +62,16 @@ budget, vocab size as parameter allocation (ADR-0003).
 - Objective: causal LM loss over packed 512-token windows.
 - Optimizer: AdamW β=(0.9, 0.95), weight decay 0.1, grad clip 1.0.
 - Schedule: peak LR 6e-4, ~1.5% warmup, cosine to 10% of peak.
-- Precision: fp16 AMP + GradScaler (T4 has no bf16).
+- Precision: config knob. bf16 autocast on L4/Ada (preferred — no GradScaler
+  needed); fp16 AMP + GradScaler fallback on T4 (Turing has no bf16).
 - Batch: micro-batch 32 × 512 tokens, grad-accum 8 → ~131k tokens/step,
-  ~3 800 steps for 500M tokens. Expect ~3–5 T4-hours total.
-- Checkpoint (model + optimizer + step) to HF Hub every ~15 min; resume is a
-  hard requirement (free tier disconnects).
+  ~3 800 steps for 500M tokens. Expect ~1.5–2.5 L4-hours (~3–5 T4-hours).
+- Token budget: 500M for the first end-to-end pass; once throughput is
+  calibrated, the final run may extend to a full 1-epoch pass (~1.3B tokens,
+  ~5 L4-hours ≈ 25 CU) — affordable under Pro, decide after SFT lands.
+- Checkpoint (model + optimizer + step) to HF Hub every ~15 min; resume stays
+  a hard requirement (Pro sessions are longer, not immortal — idle timeouts
+  and preemption still happen).
 - Track: train loss, val perplexity on held-out fables (W&B).
 
 ## Stage 2 — SFT
@@ -77,15 +84,18 @@ budget, vocab size as parameter allocation (ADR-0003).
 
 ## Stage 3 — RLAIF (ADR-0004, ADR-0006)
 
-**Judge:** Qwen3-4B-Instruct-2507, fp16 (~8 GB, fits T4 unquantized), offline
-only. Pairwise A/B verdicts guided by the dataset paper's rubric with
+**Judge:** Qwen3-8B, fp16 (~16 GB, fits the L4's 24 GB unquantized), offline
+only; fallback if only a T4 is available: Qwen3-4B-Instruct-2507 fp16 (~8 GB).
+Label quality is the ceiling on the RM and the RL stage, so the Pro headroom
+goes to the Judge first. Pairwise A/B verdicts guided by the dataset paper's rubric with
 Scaffold adherence weighted highest, then moral clarity; age 4–7 as a
 constraint. Position bias handled by judging each pair twice with order
 swapped and keeping only consistent verdicts.
 
 **Preference data:** for each of ~4k pref Scaffolds, sample N=4 completions
 from the SFT model (temp 1.0, top-p 0.95); form 2–3 pairs per Scaffold →
-~10–12k judged pairs ≈ 1–2 T4 labeling sessions. Stored as a Hub dataset.
+~10–12k judged pairs ≈ one L4 labeling session (~2–3h). Stored as a Hub
+dataset.
 
 **Reward Model:** SFT model with LM head swapped for a scalar head,
 Bradley-Terry loss, LR 3e-5, 1 epoch. Gate: held-out pair accuracy ≥ ~68%
@@ -103,9 +113,9 @@ report the GRPO attempt honestly.
 ## Evaluation
 
 - **Win-rates** (base vs SFT vs RLAIF on the same 1k held-out Scaffolds) by a
-  **cross-family eval judge** — Llama-3.1-8B-Instruct 4-bit — never the Qwen
-  Judge that produced the reward signal (self-preference bias, per the
-  dataset paper's own findings).
+  **cross-family eval judge** — Llama-3.1-8B-Instruct (fp16 on L4, 4-bit on
+  T4) — never the Qwen Judge that produced the reward signal (self-preference
+  bias, per the dataset paper's own findings).
 - **Reference-free metrics** matching the paper: Self-BLEU, Distinct-n,
   Flesch Reading Ease; plus held-out perplexity for the base model.
 - Qualitative: fixed sample table of the same Scaffolds across all three
@@ -122,8 +132,25 @@ report the GRPO attempt honestly.
   preference pairs, all checkpoints, RM, final models. Drive only as scratch.
 - **Tracking:** shared W&B project (free tier); API keys in `.env`
   (gitignored) / Colab secrets.
-- **Compute:** free-tier T4, ~3–4h sessions; every long-running script must
-  checkpoint-resume.
+- **Compute:** Colab Pro — ~100 compute units (CU)/month, sessions up to
+  ~24h. L4 (24 GB, bf16, ~5 CU/h) is the default GPU; T4 (~2 CU/h) as the
+  cheap fallback. Every long-running script must still checkpoint-resume.
+  Rough monthly budget (L4 hours ≈ CU/5):
+
+  | Run                        | est. CU |
+  |----------------------------|---------|
+  | calibration + smoke runs   | ~3      |
+  | Pretraining 500M           | ~10     |
+  | full-epoch final (optional)| ~25     |
+  | SFT                        | ~5      |
+  | Judge labeling (Qwen3-8B)  | ~10–15  |
+  | Reward Model               | ~5      |
+  | GRPO (incl. retries)       | ~10–20  |
+  | evaluation                 | ~5–10   |
+  | 5M-scale ablation          | ~5–10   |
+
+  Total ≈ 55–100 CU — one month of Pro if the full-epoch run is traded off
+  against GRPO retries.
 
 ## Milestones (4–8 weeks, 2–4 people)
 
@@ -132,6 +159,8 @@ report the GRPO attempt honestly.
 3. **W3:** SFT; first Scaffold-conditioned fables.
 4. **W4–5:** Judge labeling, RM training, RM accuracy gate.
 5. **W5–6:** GRPO (fallback decision point mid-W5).
-6. **W7–8:** evaluation suite, ablations if time permits, report.
+6. **W7–8:** evaluation suite, 5M-scale architecture ablation (promoted from
+   stretch to planned under Pro — it directly serves the graded layer-
+   justification requirement), report.
 
 Each stage yields report material even if later stages slip.

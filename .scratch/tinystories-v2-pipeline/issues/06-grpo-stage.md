@@ -17,9 +17,9 @@ reference. Hyperparameters (G, clip ε, KL β, LR, steps) from config with
 design-doc defaults.
 
 Instrumentation is a first-class requirement: per-step mean reward, KL to
-reference, and rollout diversity (Self-BLEU) stream to W&B so reward hacking
-and diversity collapse are visible early. Checkpoint-resume covers policy,
-optimizer, and RL progress.
+reference, and rollout diversity (Self-BLEU via issue 11's metrics library)
+stream to W&B so reward hacking and diversity collapse are visible early.
+Checkpoint-resume covers policy, optimizer, and RL progress.
 
 The stage starts by enforcing issue 05's accuracy gate.
 
@@ -36,3 +36,4 @@ The stage starts by enforcing issue 05's accuracy gate.
 ## Blocked by
 
 - `05-reward-model-gate.md`
+- `11-reference-free-metrics.md`

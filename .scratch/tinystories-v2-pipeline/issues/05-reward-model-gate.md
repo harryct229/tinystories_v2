@@ -12,9 +12,13 @@ The stage that distills Judge preferences into a scalar reward signal, and
 the gate that protects GRPO from a bad one.
 
 **Reward Model** (per CONTEXT.md): the SFT model with its LM head replaced by
-a scalar head, trained on the preference-pair artifact with Bradley-Terry
-loss (hand-written, ADR-0005), reusing the checkpoint-resume and W&B
-conventions. Holds out a slice of pairs for accuracy measurement.
+a scalar head, trained with Bradley-Terry loss (hand-written, ADR-0005) on
+preference pairs conforming to issue 10's schema, reusing the
+checkpoint-resume and W&B conventions. Holds out a slice of pairs for
+accuracy measurement. Development and tests use fake-Judge pairs on the
+fixture with toy checkpoints — this issue is code-complete without real
+labels; the production run additionally needs issue 03's SFT checkpoint and
+issue 04's labeled pairs.
 
 **Accuracy gate**: the stage records held-out pair accuracy in the Reward
 Model artifact's metadata, and downstream RL refuses to start when accuracy
@@ -32,4 +36,8 @@ the fix is better labels, not RL.
 
 ## Blocked by
 
-- `04-judge-seam-preference-labeling.md`
+- `02-model-pretraining-stage.md`
+- `10-judge-seam-and-pair-schema.md`
+
+(Production run also waits on `03-sft-stage.md` and
+`04-judge-seam-preference-labeling.md`, but the code and tests do not.)

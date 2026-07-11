@@ -12,7 +12,9 @@ The pre-committed stage-3 fallback (ADR-0004, design doc): a DPO training
 stage consuming the same preference-pair artifact as the Reward Model, fine-
 tuning the SFT model directly on (chosen, rejected) pairs with the frozen SFT
 reference — hand-written loss (ADR-0005), reusing checkpoint-resume, config,
-and W&B conventions.
+and W&B conventions. Development and tests use fake-Judge pairs (issue 10's
+schema) with toy checkpoints; the production run additionally needs issue
+03's SFT checkpoint and issue 04's labeled pairs.
 
 This exists so the W5 fallback decision is cheap: if GRPO is unstable or the
 Reward Model can't clear its gate by the schedule checkpoint, the team ships
@@ -31,4 +33,8 @@ sibling of the other stages — no special-case wiring.
 
 ## Blocked by
 
-- `04-judge-seam-preference-labeling.md`
+- `02-model-pretraining-stage.md`
+- `10-judge-seam-and-pair-schema.md`
+
+(Production run also waits on `03-sft-stage.md` and
+`04-judge-seam-preference-labeling.md`, but the code and tests do not.)
