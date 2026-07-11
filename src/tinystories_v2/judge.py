@@ -1,7 +1,9 @@
 """Pairwise Judge seam for preference labeling and downstream tests."""
 
 import hashlib
-from dataclasses import astuple, dataclass
+import json
+import re
+from dataclasses import asdict, astuple, dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -20,6 +22,64 @@ class Verdict(StrEnum):
     @property
     def opposite(self) -> "Verdict":
         return Verdict.B if self is Verdict.A else Verdict.A
+
+
+RUBRIC_VERSION = "fable-pairwise-v1"
+
+
+class JudgeOutputError(ValueError):
+    """Raised when a real Judge does not return one parseable verdict."""
+
+
+_VERDICT_RE = re.compile(
+    r"\s*(?:verdict\s*:\s*)?([AB])\s*[.]?\s*",
+    re.IGNORECASE,
+)
+
+
+def render_rubric_prompt(
+    scaffold: Scaffold,
+    fable_a: str,
+    fable_b: str,
+) -> str:
+    """Render the pairwise rubric without invoking or importing a model."""
+
+    payload = json.dumps(
+        {
+            "scaffold": asdict(scaffold),
+            "candidate_a": fable_a,
+            "candidate_b": fable_b,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    return (
+        "You are the Judge selecting the better moral Fable for children "
+        "ages 4–7.\n\n"
+        "Compare the candidates on exactly these four axes:\n"
+        "1. Prompt Adherence (HIGHEST WEIGHT): faithful realization of all "
+        "six Scaffold slots and the requested Fable form.\n"
+        "2. Moral Clarity (SECOND PRIORITY): an explicit, relevant ethical "
+        "lesson connected to the ending.\n"
+        "3. Grammar & Style: correct, fluent, concrete, age-appropriate "
+        "language.\n"
+        "4. Creativity: an engaging and original narrative realization.\n\n"
+        "Age suitability is a HARD CONSTRAINT: reject content whose "
+        "vocabulary, syntax, themes, or detail are unsuitable for ages 4–7.\n"
+        "Candidate labels are arbitrary. Judge content, never presentation "
+        "position. Do not return a tie.\n\n"
+        f"INPUT:\n{payload}\n\n"
+        "Return exactly one capital letter: A or B."
+    )
+
+
+def parse_verdict(raw_output: str) -> Verdict:
+    match = _VERDICT_RE.fullmatch(raw_output)
+    if match is None:
+        raise JudgeOutputError(
+            f"Judge must return a single A/B verdict, got {raw_output[:120]!r}"
+        )
+    return Verdict(match.group(1).upper())
 
 
 @runtime_checkable

@@ -1,11 +1,16 @@
 from dataclasses import asdict
 
+import pytest
+
 from tinystories_v2.judge import (
     Judge,
+    JudgeOutputError,
     PositionBiasedFakeJudge,
     SlotCoverageFakeJudge,
     Verdict,
     judge_with_order_swap,
+    parse_verdict,
+    render_rubric_prompt,
 )
 from tinystories_v2.preferences import validate_preference_pair
 from tinystories_v2.slots import extract_slots
@@ -78,3 +83,47 @@ def test_position_biased_fake_is_discarded(fixture_records):
         )
         is None
     )
+
+
+def test_rubric_renders_all_axes_priority_and_age_constraint(fixture_records):
+    scaffold = extract_slots(fixture_records[0]["prompt"])
+    prompt = render_rubric_prompt(
+        scaffold,
+        "Candidate A uses simple words and states the moral.",
+        "Candidate B has a different ending.",
+    )
+
+    for axis in (
+        "Grammar & Style",
+        "Creativity",
+        "Moral Clarity",
+        "Prompt Adherence",
+    ):
+        assert axis in prompt
+    assert "Prompt Adherence (HIGHEST WEIGHT)" in prompt
+    assert "Moral Clarity (SECOND PRIORITY)" in prompt
+    assert "ages 4–7" in prompt
+    assert "HARD CONSTRAINT" in prompt
+    for slot_value in asdict(scaffold).values():
+        assert slot_value in prompt
+    assert "Candidate A uses simple words" in prompt
+    assert "Candidate B has a different ending" in prompt
+    assert "Return exactly one capital letter: A or B." in prompt
+
+
+@pytest.mark.parametrize(
+    ("raw_output", "expected"),
+    [
+        ("A", Verdict.A),
+        ("\nB\n", Verdict.B),
+        ("Verdict: A.", Verdict.A),
+    ],
+)
+def test_parse_verdict_accepts_one_unambiguous_label(raw_output, expected):
+    assert parse_verdict(raw_output) is expected
+
+
+@pytest.mark.parametrize("raw_output", ["tie", "A because it follows the moral"])
+def test_parse_verdict_rejects_ambiguous_output(raw_output):
+    with pytest.raises(JudgeOutputError, match="single A/B verdict"):
+        parse_verdict(raw_output)
