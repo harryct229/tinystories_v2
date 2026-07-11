@@ -1,6 +1,6 @@
 # 10 — Judge seam: interface, fake and real Judges, preference-pair schema
 
-Status: ready-for-agent
+Status: complete
 
 ## Parent
 
@@ -38,12 +38,12 @@ schema using fake-Judge pairs on the fixture before real labels exist.
 
 ## Acceptance criteria
 
-- [ ] Judge interface + fakes run on CPU on fixture fables with no GPU, network, or model download
-- [ ] Order-swap consistency filter is tested through the interface: the position-biased fake yields discarded pairs, the consistent fake yields kept pairs
-- [ ] Rubric prompt includes the four axes with adherence weighted highest and is covered by a rendering test (no model download in tests)
-- [ ] Real Judge implementations are config-selected (model id, precision), sharing one code path
-- [ ] Preference-pair schema is documented, has a validation helper, and a fixture-based test produces schema-valid pairs via the fake Judge
-- [ ] Verdict metadata records judge identity so downstream artifacts are never ambiguous about who judged
+- [x] Judge interface + fakes run on CPU on fixture fables with no GPU, network, or model download
+- [x] Order-swap consistency filter is tested through the interface: the position-biased fake yields discarded pairs, the consistent fake yields kept pairs
+- [x] Rubric prompt includes the four axes with adherence weighted highest and is covered by a rendering test (no model download in tests)
+- [x] Real Judge implementations are config-selected (model id, precision), sharing one code path
+- [x] Preference-pair schema is documented, has a validation helper, and a fixture-based test produces schema-valid pairs via the fake Judge
+- [x] Verdict metadata records judge identity so downstream artifacts are never ambiguous about who judged
 
 ## Blocked by
 
