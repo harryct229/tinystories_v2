@@ -72,6 +72,25 @@ def test_consistent_fake_produces_schema_valid_pair(fixture_records):
     assert validate_preference_pair(pair.to_dict()) == pair
 
 
+def test_consistent_fake_preserves_original_b_winner(fixture_records):
+    scaffold, stronger_fable, weaker_fable = fixture_case(fixture_records)
+    original_a = weaker_fable
+    original_b = stronger_fable
+
+    pair = judge_with_order_swap(
+        SlotCoverageFakeJudge(),
+        scaffold,
+        original_a,
+        original_b,
+    )
+
+    assert pair is not None
+    assert pair.chosen == original_b
+    assert pair.rejected == original_a
+    assert pair.verdict.first_pass == "B"
+    assert pair.verdict.swapped_pass == "A"
+
+
 def test_position_biased_fake_is_discarded(fixture_records):
     scaffold, candidate_a, candidate_b = fixture_case(fixture_records)
     assert (
