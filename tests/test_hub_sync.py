@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import huggingface_hub
+import pytest
 
 from tinystories_v2.hub import fetch_from, sync_to
 
@@ -61,3 +62,14 @@ def test_hf_fetch_dispatches_to_snapshot_download(tmp_path, monkeypatch):
     assert calls == [
         ("team/tinystories-v2-pretrain", str(tmp_path / "dst"), "model")
     ]
+
+
+def test_try_sync_to_warns_instead_of_raising(tmp_path, monkeypatch):
+    from tinystories_v2 import hub
+
+    def boom(target, local_dir):
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(hub, "sync_to", boom)
+    with pytest.warns(UserWarning, match="hub sync .* failed"):
+        hub.try_sync_to("hf://team/repo", tmp_path)
