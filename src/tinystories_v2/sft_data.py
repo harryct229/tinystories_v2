@@ -54,13 +54,21 @@ def run(config: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
-    with (out_dir / "examples.jsonl").open("w", encoding="utf-8") as out:
+    examples_path = out_dir / "examples.jsonl"
+    out = examples_path.open("w", encoding="utf-8")
+    try:
         for row in _read_split(split_path):
             record = build_example_record(tokenizer, row)
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
             count += 1
             if max_examples and count >= max_examples:
                 break
+    except Exception:
+        out.close()
+        examples_path.unlink(missing_ok=True)
+        raise
+    else:
+        out.close()
 
     manifest = {
         "stage": "sft_data",

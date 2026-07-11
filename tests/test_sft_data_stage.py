@@ -7,7 +7,7 @@ from tokenizers import Tokenizer
 
 from tinystories_v2.data import run as data_run
 from tinystories_v2.sft_data import run as sft_run
-from tinystories_v2.slot_prompt import parse_example
+from tinystories_v2.slot_prompt import SlotPromptError, parse_example
 from tinystories_v2.tokenizer import run as tokenizer_run
 
 
@@ -124,3 +124,26 @@ def test_cli_entrypoint_runs_standalone(tmp_path, prepared):
     )
     assert result.returncode == 0, result.stderr
     assert (out / "examples.jsonl").exists()
+
+
+def test_partial_write_is_cleaned_up_on_failure(tmp_path, prepared):
+    # A row whose fable is empty makes encode_example raise mid-build; the
+    # partial examples.jsonl must not be left behind (mirrors data.py's
+    # abort-cleanup), and no manifest.json is written for the aborted run.
+    good = json.loads(open(prepared["sft_split"], encoding="utf-8").readline())
+    bad = dict(good, prompt_hash="0" * 64, fable="")
+    split = tmp_path / "with_bad.jsonl"
+    split.write_text(
+        json.dumps(good) + "\n" + json.dumps(bad) + "\n", encoding="utf-8"
+    )
+    out = tmp_path / "out"
+    config = {
+        "out_dir": str(out),
+        "tokenizer": prepared["tokenizer"],
+        "sft_split": str(split),
+        "max_examples": 0,
+    }
+    with pytest.raises(SlotPromptError):
+        sft_run(config)
+    assert not (out / "examples.jsonl").exists(), "partial artifact must be removed"
+    assert not (out / "manifest.json").exists()

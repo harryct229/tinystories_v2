@@ -110,9 +110,10 @@ def parse_example(tokenizer: Tokenizer, ids: Sequence[int]) -> ParsedSlotPrompt:
             "sequence must start with <|character|> and end with <|end|>"
         )
     # positions align 1:1 with SLOT_SPECIAL_TOKENS; decode each inter-marker span.
+    n = len(SLOT_FIELDS)
     slot_values = {
         field: tokenizer.decode(ids[start + 1 : end])
-        for field, start, end in zip(SLOT_FIELDS, positions[:6], positions[1:7])
+        for field, start, end in zip(SLOT_FIELDS, positions[:n], positions[1 : n + 1])
     }
-    fable = tokenizer.decode(ids[positions[6] + 1 : positions[7]])
+    fable = tokenizer.decode(ids[positions[n] + 1 : positions[n + 1]])
     return ParsedSlotPrompt(scaffold=Scaffold(**slot_values), fable=fable)
