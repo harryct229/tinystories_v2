@@ -12,11 +12,12 @@ Loss is masked over the conditioning prefix (through and including
 `<|fable|>`) and active over the fable body and the trailing `<|end|>`.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from tokenizers import Tokenizer
 
-from tinystories_v2.slots import Scaffold
+from tinystories_v2.slots import SLOT_SPECIAL_TOKENS, Scaffold
 
 # The six conditioning slots in render order — the first six SLOT_SPECIAL_TOKENS
 # without their <| |> delimiters. The trailing two specials (<|fable|>, <|end|>)
@@ -84,3 +85,34 @@ def encode_example(
     return SlotPromptExample(
         input_ids=ids, loss_mask=loss_mask, n_prompt_tokens=n_prompt_tokens
     )
+
+
+@dataclass(frozen=True)
+class ParsedSlotPrompt:
+    scaffold: Scaffold
+    fable: str
+
+
+def parse_example(tokenizer: Tokenizer, ids: Sequence[int]) -> ParsedSlotPrompt:
+    """Recover the Scaffold and fable body from a complete example sequence.
+    Raises SlotPromptError unless all eight special tokens appear exactly once,
+    in canonical order, with <|character|> first and <|end|> last."""
+    ids = list(ids)
+    special_ids = {tok: tokenizer.token_to_id(tok) for tok in SLOT_SPECIAL_TOKENS}
+    for tok, sid in special_ids.items():
+        if ids.count(sid) != 1:
+            raise SlotPromptError(f"{tok} must appear exactly once")
+    positions = [ids.index(special_ids[tok]) for tok in SLOT_SPECIAL_TOKENS]
+    if positions != sorted(positions):
+        raise SlotPromptError("special tokens are out of order")
+    if ids[0] != special_ids["<|character|>"] or ids[-1] != special_ids[END_TOKEN]:
+        raise SlotPromptError(
+            "sequence must start with <|character|> and end with <|end|>"
+        )
+    # positions align 1:1 with SLOT_SPECIAL_TOKENS; decode each inter-marker span.
+    slot_values = {
+        field: tokenizer.decode(ids[start + 1 : end])
+        for field, start, end in zip(SLOT_FIELDS, positions[:6], positions[1:7])
+    }
+    fable = tokenizer.decode(ids[positions[6] + 1 : positions[7]])
+    return ParsedSlotPrompt(scaffold=Scaffold(**slot_values), fable=fable)

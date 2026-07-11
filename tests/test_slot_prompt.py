@@ -1,12 +1,14 @@
 import pytest
 
-from tinystories_v2.slots import Scaffold, SLOT_SPECIAL_TOKENS
+from tinystories_v2.slots import Scaffold, SLOT_SPECIAL_TOKENS, extract_slots
 from tinystories_v2.slot_prompt import (
     SLOT_FIELDS,
     END_TOKEN,
     FABLE_TOKEN,
+    ParsedSlotPrompt,
     SlotPromptError,
     encode_example,
+    parse_example,
     render_example,
     render_prompt,
 )
@@ -92,3 +94,41 @@ def test_mask_and_ids_are_same_length(tokenizer):
 def test_example_to_dict_has_schema_fields(tokenizer):
     ex = encode_example(tokenizer, SCAFFOLD, "A short fable body.")
     assert set(ex.to_dict()) == {"input_ids", "loss_mask", "n_prompt_tokens"}
+
+
+def test_render_encode_parse_round_trip(tokenizer):
+    fable = "One day, a greedy fox lost his lunch and learned to share."
+    ex = encode_example(tokenizer, SCAFFOLD, fable)
+    parsed = parse_example(tokenizer, ex.input_ids)
+    assert isinstance(parsed, ParsedSlotPrompt)
+    assert parsed.scaffold == SCAFFOLD
+    assert parsed.fable == fable
+
+
+def test_round_trip_on_fixture_records(tokenizer, fixture_records):
+    for record in fixture_records[:5]:
+        scaffold = extract_slots(record["prompt"])
+        ex = encode_example(tokenizer, scaffold, record["fable"])
+        parsed = parse_example(tokenizer, ex.input_ids)
+        assert parsed.scaffold == scaffold
+        assert parsed.fable == record["fable"]
+
+
+def test_parse_missing_slot_raises(tokenizer):
+    text = (
+        "<|character|>fox<|trait|>greedy<|setting|>a forest"
+        "<|conflict|>c<|resolution|>r<|fable|>body<|end|>"  # no <|moral|>
+    )
+    ids = tokenizer.encode(text).ids
+    with pytest.raises(SlotPromptError, match="moral"):
+        parse_example(tokenizer, ids)
+
+
+def test_parse_wrong_order_raises(tokenizer):
+    text = (
+        "<|trait|>greedy<|character|>fox<|setting|>a forest"  # trait before character
+        "<|conflict|>c<|resolution|>r<|moral|>m<|fable|>body<|end|>"
+    )
+    ids = tokenizer.encode(text).ids
+    with pytest.raises(SlotPromptError, match="order"):
+        parse_example(tokenizer, ids)
