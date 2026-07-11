@@ -62,6 +62,16 @@ def test_roundtrips_slot_prompt_text(tokenizer):
     assert decoded == text
 
 
+def test_vocab_size_too_small_raises(tmp_path, fixture_path):
+    with pytest.raises(ValueError, match="vocab_size"):
+        run({
+            "out_dir": str(tmp_path / "too_small"),
+            "corpus": [str(fixture_path)],
+            "text_field": "fable",
+            "vocab_size": 100,
+        })
+
+
 def test_cli_entrypoint_runs_standalone(tmp_path, fixture_path):
     out = tmp_path / "cli_out"
     config_file = tmp_path / "cfg.toml"

@@ -80,6 +80,9 @@ def test_extraction_failure_budget(tmp_path, fixture_records):
     strict["splits"] = dict(all_pretrain)
     with pytest.raises(SlotExtractionError):
         run(strict)
+    assert not list((tmp_path / "strict" / "splits").glob("*.jsonl")), (
+        "aborted run must not leave partial split files behind"
+    )
 
     lenient = make_config(tmp_path / "lenient", corrupt)
     lenient["splits"] = dict(all_pretrain)

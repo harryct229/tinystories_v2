@@ -57,3 +57,21 @@ def test_extract_every_fixture_record(fixture_records):
 def test_non_template_prompt_raises():
     with pytest.raises(SlotExtractionError):
         extract_slots("Write me a story about a dog.")
+
+
+def test_missing_trait_word_raises():
+    # "a fox" has no trait word before the character, so the regex's trait
+    # group greedily eats "fox" and leaves character empty. That must be
+    # treated as an extraction failure, not a silently empty slot.
+    prompt = (
+        "Create a fable based on the following elements. Weave them naturally into a story: \n"
+        "- Main Character: a fox \n"
+        "- Setting: a dense forest where our story unfolds \n"
+        "- Challenge: loses their food to someone's trick \n"
+        "- Outcome: the trickster is exposed \n"
+        "- Teaching: honesty is the best policy \n"
+        "The fable should: \n"
+        "- Be appropriate for age group B (4-7 years)"
+    )
+    with pytest.raises(SlotExtractionError):
+        extract_slots(prompt)

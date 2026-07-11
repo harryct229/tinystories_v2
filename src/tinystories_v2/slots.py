@@ -56,7 +56,7 @@ def extract_slots(prompt: str) -> Scaffold:
     match = _PROMPT_RE.search(prompt)
     if match is None:
         raise SlotExtractionError(f"prompt does not match template: {prompt[:120]!r}")
-    return Scaffold(
+    scaffold = Scaffold(
         character=match["character"].strip(),
         trait=match["trait"].strip(),
         setting=_SETTING_BOILERPLATE.sub("", match["setting"].strip()),
@@ -64,3 +64,9 @@ def extract_slots(prompt: str) -> Scaffold:
         resolution=match["resolution"].strip(),
         moral=match["moral"].strip(),
     )
+    for field in ("character", "trait", "setting", "conflict", "resolution", "moral"):
+        if not getattr(scaffold, field):
+            raise SlotExtractionError(
+                f"{field} slot is empty after extraction: {prompt[:120]!r}"
+            )
+    return scaffold

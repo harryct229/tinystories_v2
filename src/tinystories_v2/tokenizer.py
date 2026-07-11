@@ -10,6 +10,10 @@ Artifacts in <out_dir>:
 
 The special tokens come from slots.SLOT_SPECIAL_TOKENS, not from config:
 the reserved set is an ADR-0003 invariant, not a tunable.
+
+Corpus text is assumed to never contain "<|": a special-token string
+appearing verbatim in corpus text (e.g. a fable containing "<|end|>") would
+encode to the reserved ID rather than its literal bytes.
 """
 
 import argparse
@@ -22,6 +26,10 @@ from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 from tinystories_v2 import __version__
 from tinystories_v2.config import load_config
 from tinystories_v2.slots import SLOT_SPECIAL_TOKENS
+
+# Byte-level BPE always needs the full 256-byte alphabet plus the reserved
+# Slot Prompt specials; anything smaller can never be trained.
+MIN_VOCAB_SIZE = 256 + len(SLOT_SPECIAL_TOKENS)
 
 
 def iter_corpus(paths: Iterable[str], text_field: str, max_docs: int = 0) -> Iterator[str]:
@@ -54,6 +62,12 @@ def train_tokenizer(texts: Iterator[str], vocab_size: int) -> Tokenizer:
 
 
 def run(config: dict) -> None:
+    vocab_size = config["vocab_size"]
+    if vocab_size < MIN_VOCAB_SIZE:
+        raise ValueError(
+            f"vocab_size={vocab_size} is too small: need at least {MIN_VOCAB_SIZE} "
+            f"(256 byte-alphabet tokens + {len(SLOT_SPECIAL_TOKENS)} reserved special tokens)"
+        )
     out_dir = Path(config["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     texts = iter_corpus(

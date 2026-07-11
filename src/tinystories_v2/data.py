@@ -72,10 +72,8 @@ def run(config: dict) -> None:
 
     membership: dict[str, list[str]] = {name: [] for name in SPLIT_NAMES}
     failures = 0
-    writers = {
-        name: (splits_dir / f"{name}.jsonl").open("w", encoding="utf-8")
-        for name in SPLIT_NAMES
-    }
+    split_paths = {name: splits_dir / f"{name}.jsonl" for name in SPLIT_NAMES}
+    writers = {name: path.open("w", encoding="utf-8") for name, path in split_paths.items()}
     try:
         for record in iter_source(config["source"]):
             split = assign_split(record["prompt_hash"], fractions, seed)
@@ -91,7 +89,13 @@ def run(config: dict) -> None:
             row = {"prompt_hash": record["prompt_hash"], **asdict(scaffold), "fable": record["fable"]}
             writers[split].write(json.dumps(row, ensure_ascii=False) + "\n")
             membership[split].append(record["prompt_hash"])
-    finally:
+    except Exception:
+        for writer in writers.values():
+            writer.close()
+        for path in split_paths.values():
+            path.unlink(missing_ok=True)
+        raise
+    else:
         for writer in writers.values():
             writer.close()
 
