@@ -1,7 +1,10 @@
 import pytest
 
-from tinystories_v2.slots import Scaffold
+from tinystories_v2.slots import Scaffold, SLOT_SPECIAL_TOKENS
 from tinystories_v2.slot_prompt import (
+    SLOT_FIELDS,
+    END_TOKEN,
+    FABLE_TOKEN,
     SlotPromptError,
     render_example,
     render_prompt,
@@ -42,3 +45,11 @@ def test_render_empty_slot_raises():
 def test_render_empty_fable_raises():
     with pytest.raises(SlotPromptError, match="fable"):
         render_example(SCAFFOLD, "   ")
+
+
+def test_render_constants_derive_from_special_token_contract():
+    # Guard against drift: the render constants must stay consistent with the
+    # single source of truth for token order (slots.SLOT_SPECIAL_TOKENS).
+    assert SLOT_FIELDS == tuple(token[2:-2] for token in SLOT_SPECIAL_TOKENS[:6])
+    assert FABLE_TOKEN == SLOT_SPECIAL_TOKENS[6]
+    assert END_TOKEN == SLOT_SPECIAL_TOKENS[7]
