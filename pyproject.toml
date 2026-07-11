@@ -28,6 +28,7 @@ ts2-data-prep = "tinystories_v2.data:main"
 ts2-tokenizer = "tinystories_v2.tokenizer:main"
 ts2-pretrain = "tinystories_v2.pretrain:main"
 ts2-generate = "tinystories_v2.generate:main"
+ts2-sft-data = "tinystories_v2.sft_data:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

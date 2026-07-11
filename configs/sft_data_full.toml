@@ -1,0 +1,7 @@
+# Real SFT dataset build (~50k examples). Assumes these upstream stages have run:
+#   ts2-data-prep --config configs/data_prep_full.toml
+#   ts2-tokenizer --config configs/tokenizer_full.toml
+out_dir = "artifacts/sft_data_full"
+tokenizer = "artifacts/tokenizer_full/tokenizer.json"
+sft_split = "artifacts/data_prep_full/splits/sft.jsonl"
+max_examples = 0
