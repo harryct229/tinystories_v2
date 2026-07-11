@@ -98,6 +98,7 @@ def test_killed_run_resumes_to_identical_final_state(tmp_path, fixture_path):
             time.sleep(0.01)
         os.kill(proc.pid, signal.SIGKILL)
     finally:
+        proc.kill()  # idempotent if already SIGKILLed; guards the timeout path
         proc.wait(timeout=30)
 
     killed_at = load_checkpoint(latest_checkpoint(ckpt_dir))["step"]
