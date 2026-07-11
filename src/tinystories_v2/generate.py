@@ -18,10 +18,26 @@ import argparse
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 
 from tinystories_v2.checkpoint import latest_checkpoint, load_checkpoint
 from tinystories_v2.model import FableLM, ModelConfig
+
+
+def _top_p_filter(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+    """Nucleus-filter logits: set non-nucleus entries to -inf.
+
+    Keeps the smallest prefix of sorted-descending tokens whose cumulative
+    mass *before* each token does not exceed top_p (the highest-probability
+    token always survives). Returns logits in the original vocab order.
+    """
+    sorted_logits, sorted_ix = logits.sort(dim=-1, descending=True)
+    probs_sorted = sorted_logits.softmax(dim=-1)
+    cumulative = probs_sorted.cumsum(dim=-1)
+    # Drop tokens once the cumulative mass before them exceeds top_p
+    # (the first token always survives).
+    drop = cumulative - probs_sorted > top_p
+    sorted_logits[drop] = -float("inf")
+    return torch.full_like(logits, -float("inf")).scatter(-1, sorted_ix, sorted_logits)
 
 
 @torch.no_grad()
@@ -47,14 +63,7 @@ def sample(model: FableLM, prompt_ids: list[int], *, num_samples: int = 1,
         else:
             logits = logits / temperature
             if top_p < 1.0:
-                sorted_logits, sorted_ix = logits.sort(dim=-1, descending=True)
-                cumulative = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-                # Drop tokens once the cumulative mass before them exceeds top_p
-                # (the first token always survives).
-                drop = cumulative - sorted_logits.softmax(dim=-1) > top_p
-                sorted_logits[drop] = -float("inf")
-                logits = torch.full_like(logits, -float("inf")).scatter(
-                    -1, sorted_ix, sorted_logits)
+                logits = _top_p_filter(logits, top_p)
             probs = logits.softmax(dim=-1)
             next_ids = torch.multinomial(probs, 1, generator=generator).squeeze(-1)
         idx = torch.cat([idx, next_ids.unsqueeze(-1)], dim=-1)
