@@ -1,0 +1,5 @@
+# Toy vocab against the committed fixture (8192 is unreachable from 120 Fables).
+out_dir = "artifacts/tokenizer_fixture"
+corpus = ["tests/fixtures/tf1_sample.jsonl"]
+text_field = "fable"
+vocab_size = 512

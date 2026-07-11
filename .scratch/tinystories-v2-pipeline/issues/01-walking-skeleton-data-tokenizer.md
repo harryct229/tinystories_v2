@@ -33,12 +33,12 @@ per ADR-0003.
 
 ## Acceptance criteria
 
-- [ ] Repo has an initial commit of existing docs, then commits for the scaffold; `.env` remains gitignored and no secret value appears in code, config, or test output
-- [ ] Package installs with `pip install -e .` and the test suite runs green on laptop CPU with no GPU or network access
-- [ ] Data-prep stage run on the fixture produces the four splits; a test asserts split disjointness by fable and deterministic membership across two runs
-- [ ] Slot extraction is validated against at least a handful of real TF1-EN-3M records (recorded as a small committed sample), and a test covers extraction from the verbose prompt format
-- [ ] Tokenizer stage produces an artifact that round-trips fixture text losslessly; a test asserts vocab size and that every Slot Prompt special token encodes to a single ID
-- [ ] Both stages follow the config→artifacts convention (invocable standalone, artifacts in a target directory, no in-memory coupling)
+- [x] Repo has an initial commit of existing docs, then commits for the scaffold; `.env` remains gitignored and no secret value appears in code, config, or test output
+- [x] Package installs with `pip install -e .` and the test suite runs green on laptop CPU with no GPU or network access
+- [x] Data-prep stage run on the fixture produces the four splits; a test asserts split disjointness by fable and deterministic membership across two runs
+- [x] Slot extraction is validated against at least a handful of real TF1-EN-3M records (recorded as a small committed sample), and a test covers extraction from the verbose prompt format
+- [x] Tokenizer stage produces an artifact that round-trips fixture text losslessly; a test asserts vocab size and that every Slot Prompt special token encodes to a single ID
+- [x] Both stages follow the config→artifacts convention (invocable standalone, artifacts in a target directory, no in-memory coupling)
 
 ## Blocked by
 
