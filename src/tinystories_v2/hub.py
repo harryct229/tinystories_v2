@@ -9,6 +9,14 @@ Stages write artifacts locally first and sync as a separate step, so the
 training loop never blocks on (or fails because of) the network — a failed
 sync is a warning, not a dead run. Uses module-level attribute access
 (huggingface_hub.HfApi) so tests can monkeypatch without network.
+
+Mirror semantics: checkpoint files (checkpoints/step_*.pt) are mirrored with
+deletion, so once local `prune_checkpoints` removes a stale checkpoint, the
+next sync removes it from the remote/mirror too — otherwise every checkpoint
+ever synced would accumulate remotely even after local pruning, and a
+fresh-VM resume would re-download all of them. All other files (metrics.jsonl,
+manifest.json, ...) keep add/overwrite semantics only — nothing else is ever
+deleted.
 """
 
 import shutil
@@ -22,6 +30,9 @@ from tinystories_v2.config import load_env
 _HF_PREFIX = "hf://"
 
 
+_CHECKPOINT_GLOB = "checkpoints/step_*.pt"
+
+
 def sync_to(target: str, local_dir: Path) -> None:
     local_dir = Path(local_dir)
     if target.startswith(_HF_PREFIX):
@@ -30,7 +41,7 @@ def sync_to(target: str, local_dir: Path) -> None:
         api = huggingface_hub.HfApi()
         api.create_repo(repo_id, private=True, exist_ok=True, repo_type="model")
         api.upload_folder(folder_path=str(local_dir), repo_id=repo_id,
-                          repo_type="model")
+                          repo_type="model", delete_patterns=[_CHECKPOINT_GLOB])
     else:
         dst = Path(target)
         for src_file in local_dir.rglob("*"):
@@ -39,6 +50,16 @@ def sync_to(target: str, local_dir: Path) -> None:
             dst_file = dst / src_file.relative_to(local_dir)
             dst_file.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_file, dst_file)
+        # Mirror deletions for checkpoint files only: anything pruned locally
+        # (by prune_checkpoints) is removed from the mirror too.
+        local_ckpt_dir = local_dir / "checkpoints"
+        dst_ckpt_dir = dst / "checkpoints"
+        if dst_ckpt_dir.is_dir():
+            local_names = ({p.name for p in local_ckpt_dir.glob("step_*.pt")}
+                          if local_ckpt_dir.is_dir() else set())
+            for dst_file in dst_ckpt_dir.glob("step_*.pt"):
+                if dst_file.name not in local_names:
+                    dst_file.unlink()
 
 
 def fetch_from(target: str, local_dir: Path) -> None:

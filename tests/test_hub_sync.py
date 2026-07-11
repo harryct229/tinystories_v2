@@ -38,16 +38,31 @@ def test_hf_target_dispatches_to_hub_api(tmp_path, monkeypatch):
         def create_repo(self, repo_id, private, exist_ok, repo_type):
             calls.append(("create_repo", repo_id, private, exist_ok, repo_type))
 
-        def upload_folder(self, folder_path, repo_id, repo_type):
-            calls.append(("upload_folder", folder_path, repo_id, repo_type))
+        def upload_folder(self, folder_path, repo_id, repo_type, delete_patterns):
+            calls.append(("upload_folder", folder_path, repo_id, repo_type,
+                          delete_patterns))
 
     monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
     make_tree(tmp_path / "src")
     sync_to("hf://team/tinystories-v2-pretrain", tmp_path / "src")
     assert calls == [
         ("create_repo", "team/tinystories-v2-pretrain", True, True, "model"),
-        ("upload_folder", str(tmp_path / "src"), "team/tinystories-v2-pretrain", "model"),
+        ("upload_folder", str(tmp_path / "src"), "team/tinystories-v2-pretrain", "model",
+         ["checkpoints/step_*.pt"]),
     ]
+
+
+def test_local_sync_removes_pruned_checkpoints(tmp_path):
+    src, mirror = tmp_path / "src", tmp_path / "mirror"
+    make_tree(src)
+    sync_to(str(mirror), src)
+    # keep_last pruning removed step 2 locally, step 4 replaced it
+    (src / "checkpoints" / "step_000002.pt").unlink()
+    (src / "checkpoints" / "step_000004.pt").write_bytes(b"newer")
+    sync_to(str(mirror), src)
+    assert not (mirror / "checkpoints" / "step_000002.pt").exists()
+    assert (mirror / "checkpoints" / "step_000004.pt").read_bytes() == b"newer"
+    assert (mirror / "metrics.jsonl").exists()  # non-checkpoint files untouched
 
 
 def test_hf_fetch_dispatches_to_snapshot_download(tmp_path, monkeypatch):
