@@ -23,6 +23,7 @@ track = ["wandb>=0.17"]
 ts2-data-prep = "tinystories_v2.data:main"
 ts2-tokenizer = "tinystories_v2.tokenizer:main"
 ts2-pretrain = "tinystories_v2.pretrain:main"
+ts2-generate = "tinystories_v2.generate:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
