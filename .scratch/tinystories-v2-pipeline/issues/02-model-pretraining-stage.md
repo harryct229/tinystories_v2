@@ -41,14 +41,14 @@ part of this issue's acceptance.
 
 ## Acceptance criteria
 
-- [ ] Model invariant tests pass at the forward boundary: position-t logits unaffected by future tokens (causality), parameter count within budget for the real config, forward works in fp32 and under autocast in both bf16 and fp16
-- [ ] Toy Pretraining run on the fixture decreases training loss, and a test asserts it through the stage entrypoint
-- [ ] Kill-and-resume test: interrupted toy run resumed from latest checkpoint continues from the recorded step with matching training state
-- [ ] Packed-data artifact has documented dtype/shape and a test verifies round-trip against the tokenizer
-- [ ] Hub sync layer is exercised in tests against a local path (no network); pushing/pulling real Hub repos works via config
-- [ ] Metrics (loss, LR, tokens seen) stream to W&B when enabled and degrade gracefully to local JSONL when not
-- [ ] Generation utility produces seeded-reproducible samples from a toy checkpoint
-- [ ] Thin Colab notebook exists and contains no logic beyond setup + stage invocation
+- [x] Model invariant tests pass at the forward boundary: position-t logits unaffected by future tokens (causality), parameter count within budget for the real config, forward works in fp32 and under autocast in both bf16 and fp16
+- [x] Toy Pretraining run on the fixture decreases training loss, and a test asserts it through the stage entrypoint
+- [x] Kill-and-resume test: interrupted toy run resumed from latest checkpoint continues from the recorded step with matching training state
+- [x] Packed-data artifact has documented dtype/shape and a test verifies round-trip against the tokenizer
+- [x] Hub sync layer is exercised in tests against a local path (no network); pushing/pulling real Hub repos works via config
+- [x] Metrics (loss, LR, tokens seen) stream to W&B when enabled and degrade gracefully to local JSONL when not
+- [x] Generation utility produces seeded-reproducible samples from a toy checkpoint
+- [x] Thin Colab notebook exists and contains no logic beyond setup + stage invocation
 
 ## Blocked by
 

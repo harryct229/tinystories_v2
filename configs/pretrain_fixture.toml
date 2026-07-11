@@ -1,0 +1,35 @@
+# Toy CPU run against the committed fixture — local sanity runs and docs.
+out_dir = "artifacts/pretrain_fixture"
+
+[model]
+vocab_size = 512
+d_model = 64
+n_layers = 2
+n_heads = 2
+context = 64
+ffn_hidden = 192
+
+[data]
+split_path = "tests/fixtures/tf1_sample.jsonl"
+tokenizer_path = "artifacts/tokenizer_fixture/tokenizer.json"
+packed_path = "artifacts/pretrain_fixture/pretrain.bin"
+
+[train]
+steps = 30
+micro_batch_size = 8
+grad_accum = 1
+peak_lr = 1e-3
+warmup_frac = 0.1
+min_lr_frac = 0.1
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "fp32"
+seed = 1337
+checkpoint_every = 10
+log_every = 1
+keep_last = 0
+
+[wandb]
+enabled = false

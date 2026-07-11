@@ -49,7 +49,8 @@ Llama-style decoder-only, hand-written PyTorch `nn.Module` (ADR-0005):
 - Custom byte-level BPE tokenizer, vocab 8192, trained on a corpus sample;
   special tokens reserved up front: `<|character|> <|trait|> <|setting|>
   <|conflict|> <|resolution|> <|moral|> <|fable|> <|end|>`.
-- Total ≈ 27M params (≈4.2M embeddings).
+- Total 29,893,120 params exactly (≈4.2M embeddings; the design-phase "≈27M"
+  was a rough estimate — exact formula in tests/test_model.py).
 
 Report angle per layer: RMSNorm (Zhang & Sennrich 2019), RoPE (Su et al.
 2021), SwiGLU (Shazeer 2020), pre-norm stability, tied embeddings as param
