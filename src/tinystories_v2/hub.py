@@ -10,11 +10,12 @@ training loop never blocks on (or fails because of) the network — a failed
 sync is a warning, not a dead run. Uses module-level attribute access
 (huggingface_hub.HfApi) so tests can monkeypatch without network.
 
-Mirror semantics: checkpoint files (checkpoints/step_*.pt) are mirrored with
-deletion, so once local `prune_checkpoints` removes a stale checkpoint, the
-next sync removes it from the remote/mirror too — otherwise every checkpoint
-ever synced would accumulate remotely even after local pruning, and a
-fresh-VM resume would re-download all of them. All other files (metrics.jsonl,
+Mirror semantics: Push (sync_to) mirrors checkpoint deletions, so once local
+`prune_checkpoints` removes a stale checkpoint, the next sync removes it from
+the remote/mirror too — otherwise every checkpoint ever synced would
+accumulate remotely even after local pruning, and a fresh-VM resume would
+re-download all of them. Fetch (fetch_from) is additive: never deletes
+destination checkpoints even if source has none. All other files (metrics.jsonl,
 manifest.json, ...) keep add/overwrite semantics only — nothing else is ever
 deleted.
 """
@@ -33,15 +34,16 @@ _HF_PREFIX = "hf://"
 _CHECKPOINT_GLOB = "checkpoints/step_*.pt"
 
 
-def sync_to(target: str, local_dir: Path) -> None:
+def sync_to(target: str, local_dir: Path, *, mirror_checkpoints: bool = True) -> None:
     local_dir = Path(local_dir)
     if target.startswith(_HF_PREFIX):
         load_env()
         repo_id = target[len(_HF_PREFIX):]
         api = huggingface_hub.HfApi()
         api.create_repo(repo_id, private=True, exist_ok=True, repo_type="model")
+        delete_patterns = [_CHECKPOINT_GLOB] if mirror_checkpoints else None
         api.upload_folder(folder_path=str(local_dir), repo_id=repo_id,
-                          repo_type="model", delete_patterns=[_CHECKPOINT_GLOB])
+                          repo_type="model", delete_patterns=delete_patterns)
     else:
         dst = Path(target)
         for src_file in local_dir.rglob("*"):
@@ -52,14 +54,15 @@ def sync_to(target: str, local_dir: Path) -> None:
             shutil.copy2(src_file, dst_file)
         # Mirror deletions for checkpoint files only: anything pruned locally
         # (by prune_checkpoints) is removed from the mirror too.
-        local_ckpt_dir = local_dir / "checkpoints"
-        dst_ckpt_dir = dst / "checkpoints"
-        if dst_ckpt_dir.is_dir():
-            local_names = ({p.name for p in local_ckpt_dir.glob("step_*.pt")}
-                          if local_ckpt_dir.is_dir() else set())
-            for dst_file in dst_ckpt_dir.glob("step_*.pt"):
-                if dst_file.name not in local_names:
-                    dst_file.unlink()
+        if mirror_checkpoints:
+            local_ckpt_dir = local_dir / "checkpoints"
+            dst_ckpt_dir = dst / "checkpoints"
+            if dst_ckpt_dir.is_dir():
+                local_names = ({p.name for p in local_ckpt_dir.glob("step_*.pt")}
+                              if local_ckpt_dir.is_dir() else set())
+                for dst_file in dst_ckpt_dir.glob("step_*.pt"):
+                    if dst_file.name not in local_names:
+                        dst_file.unlink()
 
 
 def fetch_from(target: str, local_dir: Path) -> None:
@@ -71,7 +74,7 @@ def fetch_from(target: str, local_dir: Path) -> None:
             repo_id=repo_id, local_dir=str(local_dir), repo_type="model"
         )
     else:
-        sync_to(str(local_dir), Path(target))
+        sync_to(str(local_dir), Path(target), mirror_checkpoints=False)
 
 
 def try_sync_to(target: str, local_dir: Path) -> None:

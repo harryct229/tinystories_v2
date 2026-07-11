@@ -64,14 +64,10 @@ def test_prompt_longer_than_context_rejected(model):
 def test_top_p_filter_keeps_exact_nucleus():
     from tinystories_v2.generate import _top_p_filter
 
-    logits = torch.log(torch.tensor([[0.5, 0.3, 0.15, 0.05]]))
-    filtered = _top_p_filter(logits, top_p=0.8)
-    # cumulative mass before each token: 0.0, 0.5, 0.8, 0.95 -- mathematically
-    # the prefix mass before token index 2 is exactly 0.8, which is NOT > 0.8,
-    # so it should sit on the keep side of the boundary. In float32 the
-    # reconstructed softmax mass lands at 0.8 + ~6e-8 (measured), so
-    # `cumulative - probs_sorted > top_p` is True there and it IS dropped --
-    # this test pins that measured (not idealized) exclusive-prefix behavior.
+    # exclusive-prefix masses: 0.0, 0.6, 0.85, 0.95 vs top_p=0.7 —
+    # boundaries sit >=0.1 away, so no float32 rounding can flip them
+    logits = torch.log(torch.tensor([[0.6, 0.25, 0.1, 0.05]]))
+    filtered = _top_p_filter(logits, top_p=0.7)
     assert torch.isfinite(filtered[0, :2]).all()
     assert torch.isinf(filtered[0, 2:]).all() and (filtered[0, 2:] < 0).all()
 

@@ -88,3 +88,13 @@ def test_try_sync_to_warns_instead_of_raising(tmp_path, monkeypatch):
     monkeypatch.setattr(hub, "sync_to", boom)
     with pytest.warns(UserWarning, match="hub sync .* failed"):
         hub.try_sync_to("hf://team/repo", tmp_path)
+
+
+def test_fetch_from_never_deletes_destination_checkpoints(tmp_path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    (src / "notes").mkdir(parents=True)
+    (src / "notes" / "readme.txt").write_text("hi", encoding="utf-8")
+    make_tree(dst)  # destination already has checkpoints/step_000002.pt
+    fetch_from(str(src), dst)
+    assert (dst / "checkpoints" / "step_000002.pt").exists()  # untouched
+    assert (dst / "notes" / "readme.txt").exists()  # fetched
