@@ -1,0 +1,14 @@
+# Toy run against the committed fixture — local sanity runs and docs.
+out_dir = "artifacts/data_prep_fixture"
+max_extraction_failures = 0
+
+[source]
+kind = "jsonl"
+path = "tests/fixtures/tf1_sample.jsonl"
+
+[splits]
+seed = "tinystories-v2-splits-v1"
+pretrain = 0.5
+sft = 0.2
+pref = 0.1
+eval = 0.2

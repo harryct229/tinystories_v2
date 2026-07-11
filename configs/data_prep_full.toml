@@ -1,0 +1,17 @@
+# Real run over the 2.8M-row train split -> ~1.1M pretrain / ~50k SFT /
+# ~4k pref / ~6k eval Fables (docs/DESIGN.md). Fractions of 2.8M rows;
+# the unassigned remainder stays unused. Needs network + HF token in .env.
+out_dir = "artifacts/data_prep_full"
+max_extraction_failures = 100
+
+[source]
+kind = "hub"
+dataset = "klusai/ds-tf1-en-3m"
+split = "train"
+
+[splits]
+seed = "tinystories-v2-splits-v1"
+pretrain = 0.393
+sft = 0.018
+pref = 0.0015
+eval = 0.0022
