@@ -1,0 +1,8 @@
+# Toy SFT dataset build against fixture artifacts — local sanity runs and docs.
+# Assumes these upstream stages have run:
+#   ts2-data-prep --config configs/data_prep_fixture.toml
+#   ts2-tokenizer --config configs/tokenizer_fixture.toml
+out_dir = "artifacts/sft_data_fixture"
+tokenizer = "artifacts/tokenizer_fixture/tokenizer.json"
+sft_split = "artifacts/data_prep_fixture/splits/sft.jsonl"
+max_examples = 0

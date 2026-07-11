@@ -23,6 +23,7 @@ judge = [
 [project.scripts]
 ts2-data-prep = "tinystories_v2.data:main"
 ts2-tokenizer = "tinystories_v2.tokenizer:main"
+ts2-sft-data = "tinystories_v2.sft_data:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
