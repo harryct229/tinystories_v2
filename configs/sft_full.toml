@@ -1,0 +1,47 @@
+# Real SFT run on Colab Pro (design-doc defaults: LR 1e-4 cosine, ~1-2 epochs).
+# bf16 on L4 (preferred). On a T4 fallback set precision = "fp16".
+# Prerequisites on Hub/disk: sft_data full artifact + tokenizer_full, and a
+# Pretraining checkpoint. [init].hub_source pulls the pretrain artifact if the
+# local copy is absent (fresh VM).
+out_dir = "artifacts/sft_full"
+
+[model]
+vocab_size = 8192
+d_model = 512
+n_layers = 8
+n_heads = 8
+context = 512
+ffn_hidden = 1408
+
+[data]
+examples_path = "artifacts/sft_data_full/examples.jsonl"
+tokenizer_path = "artifacts/tokenizer_full/tokenizer.json"
+
+[init]
+local_dir = "artifacts/pretrain_full"
+hub_source = "hf://congthanh991/tinystories-v2-pretrain"
+
+[train]
+steps = 800                 # ~2 epochs of ~50k examples at micro_batch 16 x accum 8
+micro_batch_size = 16
+grad_accum = 8
+peak_lr = 1e-4
+warmup_frac = 0.03
+min_lr_frac = 0.1
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "bf16"
+seed = 1337
+checkpoint_every = 100      # ~10-15 min on L4
+log_every = 10
+keep_last = 2
+
+[wandb]
+enabled = true
+project = "tinystories-v2"
+run_name = "sft"
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-sft"

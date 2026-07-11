@@ -23,10 +23,22 @@ state round-trips, so an interrupted-and-resumed run reproduces the
 uninterrupted run exactly (fp32 CPU; asserted by tests/test_sft_resume.py).
 """
 
+import argparse
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
+
+from tinystories_v2 import __version__
+from tinystories_v2.checkpoint import (
+    latest_checkpoint, load_checkpoint, prune_checkpoints, save_checkpoint,
+)
+from tinystories_v2.config import load_config, load_env
+from tinystories_v2.hub import fetch_from, try_sync_to
+from tinystories_v2.model import FableLM, ModelConfig
+from tinystories_v2.pretrain import build_optimizer, lr_at
+from tinystories_v2.tracking import MetricsLogger
 
 
 def load_sft_examples(path: str | Path) -> list[dict]:
@@ -85,3 +97,143 @@ def masked_lm_loss(logits: torch.Tensor, y: torch.Tensor,
     )
     loss = loss.view_as(y) * mask
     return loss.sum() / mask.sum().clamp(min=1.0)
+
+
+def _init_model_from_pretrain(config: dict, device: str) -> FableLM:
+    """Fresh SFT start: build the model from [model] and load Pretraining
+    weights. Fetches the init artifact from Hub first if the local checkpoint is
+    absent, then validates the pretrained architecture matches [model]."""
+    model = FableLM(ModelConfig(**config["model"])).to(device)
+    init = config["init"]
+    init_dir = Path(init["local_dir"])
+    init_ckpt_dir = init_dir / "checkpoints"
+    if latest_checkpoint(init_ckpt_dir) is None and init.get("hub_source"):
+        fetch_from(init["hub_source"], init_dir)  # fresh Colab VM: pull pretrain
+    init_ckpt = latest_checkpoint(init_ckpt_dir)
+    if init_ckpt is None:
+        raise ValueError(
+            f"no Pretraining checkpoint under {init_ckpt_dir}; point "
+            f"[init].local_dir (and optionally [init].hub_source) at the "
+            f"Pretraining artifact"
+        )
+    state = load_checkpoint(init_ckpt)
+    if ModelConfig(**state["config"]["model"]) != model.config:
+        raise ValueError(
+            f"[model] does not match the Pretraining checkpoint at {init_ckpt}; "
+            f"SFT must use the pretrained architecture"
+        )
+    model.load_state_dict(state["model"])
+    print(f"initialized from Pretraining checkpoint {init_ckpt}")
+    return model
+
+
+def run(config: dict, resume: bool = False) -> dict:
+    load_env()  # W&B/HF keys before wandb.init or hub sync; never printed
+    train = config["train"]
+    out_dir = Path(config["out_dir"])
+    ckpt_dir = out_dir / "checkpoints"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    hub_target = config.get("hub", {}).get("target")
+
+    examples = load_sft_examples(config["data"]["examples_path"])
+    if not examples:
+        raise ValueError(f"no examples in {config['data']['examples_path']}")
+
+    # -- precision knob: fp32 | bf16 (autocast) | fp16 (autocast + GradScaler)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    precision = train["precision"]
+    amp_dtype = {"fp32": None, "bf16": torch.bfloat16, "fp16": torch.float16}[precision]
+    autocast = (torch.autocast(device_type=device, dtype=amp_dtype)
+                if amp_dtype else nullcontext())
+    scaler = torch.amp.GradScaler(device, enabled=(precision == "fp16"))
+
+    torch.manual_seed(train["seed"])
+    model = _init_model_from_pretrain(config, device)
+    optimizer = build_optimizer(model, train["peak_lr"],
+                                (train["beta1"], train["beta2"]),
+                                train["weight_decay"])
+
+    start_step, tokens_seen = 0, 0
+    if resume:
+        if latest_checkpoint(ckpt_dir) is None and hub_target:
+            fetch_from(hub_target, out_dir)  # fresh Colab VM: pull previous session
+        ckpt_path = latest_checkpoint(ckpt_dir)
+        if ckpt_path is not None:
+            state = load_checkpoint(ckpt_path)
+            model.load_state_dict(state["model"])
+            optimizer.load_state_dict(state["optimizer"])
+            scaler.load_state_dict(state["scaler"])
+            start_step, tokens_seen = state["step"], state["tokens_seen"]
+            print(f"resumed from {ckpt_path.name} at step {start_step}")
+
+    def checkpoint(step: int) -> None:
+        save_checkpoint(ckpt_dir, step, {
+            "step": step, "tokens_seen": tokens_seen,
+            "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+            "scaler": scaler.state_dict(), "config": config,
+        })
+        prune_checkpoints(ckpt_dir, train.get("keep_last", 0))
+        if hub_target:
+            try_sync_to(hub_target, out_dir)
+
+    logger = MetricsLogger(out_dir, config.get("wandb"))
+    steps, accum = train["steps"], train["grad_accum"]
+    micro_bs, context = train["micro_batch_size"], config["model"]["context"]
+    loss_value = float("nan")
+    model.train()
+    for step in range(start_step, steps):
+        lr = lr_at(step, steps, train["peak_lr"],
+                   train["warmup_frac"], train["min_lr_frac"])
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        optimizer.zero_grad(set_to_none=True)
+        for micro_step in range(accum):
+            x, y, mask = get_sft_batch(examples, micro_bs, context,
+                                       seed=train["seed"], step=step,
+                                       micro_step=micro_step, device=device)
+            with autocast:
+                logits = model(x)
+                loss = masked_lm_loss(logits, y, mask)
+            scaler.scale(loss / accum).backward()
+            tokens_seen += int(mask.sum().item())  # cumulative active target tokens
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), train["grad_clip"])
+        scaler.step(optimizer)
+        scaler.update()
+        loss_value = loss.item()  # last micro-batch masked loss (logged raw)
+        done = step + 1
+        if done % train["log_every"] == 0:
+            logger.log({"loss": loss_value, "lr": lr, "tokens_seen": tokens_seen},
+                       step=done)
+        if done % train["checkpoint_every"] == 0:
+            checkpoint(done)
+    if steps % train["checkpoint_every"] != 0:
+        checkpoint(steps)
+    logger.finish()
+
+    manifest = {
+        "stage": "sft", "package_version": __version__,
+        "final_step": steps, "final_loss": loss_value,
+        "tokens_seen": tokens_seen,
+        "examples_path": config["data"]["examples_path"],
+        "n_examples": len(examples),
+        "config": config,
+    }
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2),
+                                           encoding="utf-8")
+    if hub_target:
+        try_sync_to(hub_target, out_dir)
+    return {"step": steps, "loss": loss_value}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="continue from the latest checkpoint in out_dir")
+    args = parser.parse_args(argv)
+    run(load_config(args.config), resume=args.resume)
+
+
+if __name__ == "__main__":
+    main()

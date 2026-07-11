@@ -1,0 +1,45 @@
+# Toy CPU wiring smoke against fixture artifacts — local sanity runs and docs.
+# Assumes these upstream stages have run with a matching [model] block:
+#   ts2-data-prep --config configs/data_prep_fixture.toml
+#   ts2-tokenizer --config configs/tokenizer_fixture.toml
+#   ts2-sft-data  --config configs/sft_data_fixture.toml
+#   ts2-pretrain  --config configs/pretrain_fixture.toml   (produces the init checkpoint)
+# At context 64 this is a wiring smoke, not a quality run; real SFT uses
+# configs/sft_full.toml. Stage behavior is guarded by tests/test_sft_*.py.
+out_dir = "artifacts/sft_fixture"
+
+# Must match the Pretraining checkpoint's architecture (pretrain_fixture.toml).
+[model]
+vocab_size = 512
+d_model = 64
+n_layers = 2
+n_heads = 2
+context = 64
+ffn_hidden = 192
+
+[data]
+examples_path = "artifacts/sft_data_fixture/examples.jsonl"
+tokenizer_path = "artifacts/tokenizer_fixture/tokenizer.json"
+
+[init]
+local_dir = "artifacts/pretrain_fixture"   # contains checkpoints/step_*.pt
+
+[train]
+steps = 30
+micro_batch_size = 8
+grad_accum = 1
+peak_lr = 1e-3
+warmup_frac = 0.1
+min_lr_frac = 0.1
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "fp32"
+seed = 1337
+checkpoint_every = 10
+log_every = 1
+keep_last = 0
+
+[wandb]
+enabled = false
