@@ -126,3 +126,48 @@ def self_bleu(
         for i, hypothesis in enumerate(tokenized)
     ]
     return sum(scores) / len(scores)
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"[.!?]+")
+_VOWEL_RUN_RE = re.compile(r"[aeiouy]+")
+
+
+def _count_syllables(word: str) -> int:
+    """Heuristic: vowel runs, dropping a silent final 'e' (but not 'le')."""
+    runs = _VOWEL_RUN_RE.findall(word)
+    count = len(runs)
+    if count > 1 and word.endswith("e") and not word.endswith("le"):
+        count -= 1
+    return max(count, 1)
+
+
+def flesch_reading_ease(text: str) -> float:
+    """206.835 - 1.015*(words/sentences) - 84.6*(syllables/words).
+
+    Sentences are [.!?]-delimited segments containing at least one word;
+    text with words but no terminal punctuation counts as one sentence.
+    Higher = easier reading; the paper's Fables average 78.9 (ages 4-7).
+    Syllable counts use the documented vowel-run heuristic, so absolute
+    values are comparable within this library, not across other tools.
+    """
+    words = tokenize_words(text)
+    if not words:
+        raise ValueError("text contains no words")
+    sentences = sum(
+        1
+        for segment in _SENTENCE_SPLIT_RE.split(text)
+        if tokenize_words(segment)
+    )
+    syllables = sum(_count_syllables(word) for word in words)
+    return (
+        206.835
+        - 1.015 * (len(words) / sentences)
+        - 84.6 * (syllables / len(words))
+    )
+
+
+def mean_flesch_reading_ease(fables: Sequence[str]) -> float:
+    """Mean per-fable Flesch Reading Ease, matching the paper's tables."""
+    if not fables:
+        raise ValueError("mean_flesch_reading_ease needs at least one fable")
+    return sum(flesch_reading_ease(fable) for fable in fables) / len(fables)

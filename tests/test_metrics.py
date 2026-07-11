@@ -3,7 +3,13 @@ import random
 
 import pytest
 
-from tinystories_v2.metrics import distinct_n, self_bleu, tokenize_words
+from tinystories_v2.metrics import (
+    distinct_n,
+    flesch_reading_ease,
+    mean_flesch_reading_ease,
+    self_bleu,
+    tokenize_words,
+)
 
 
 def test_tokenize_words_casefolds_and_keeps_apostrophes():
@@ -107,3 +113,43 @@ def test_self_bleu_sampling_is_seeded_and_deterministic():
 def test_self_bleu_rejects_sample_size_below_two():
     with pytest.raises(ValueError, match="sample_size"):
         self_bleu(["a b", "c d", "e f"], sample_size=1)
+
+
+def test_flesch_single_sentence_hand_computed():
+    # 6 words, 6 syllables, 1 sentence:
+    # 206.835 - 1.015*(6/1) - 84.6*(6/6) = 116.145
+    assert flesch_reading_ease("The cat sat on the mat.") == pytest.approx(
+        116.145
+    )
+
+
+def test_flesch_multi_sentence_and_syllable_rules_hand_computed():
+    # Syllables: the=1 happy=2 fox=1 ran=1 it=1 was=1 little=2 ("le"
+    # ending keeps its final vowel run) -> 9 syllables, 7 words,
+    # 2 sentences:
+    # 206.835 - 1.015*(7/2) - 84.6*(9/7) = 94.51107142857143
+    assert flesch_reading_ease(
+        "The happy fox ran. It was little."
+    ) == pytest.approx(94.51107142857143)
+
+
+def test_flesch_text_without_terminal_punctuation_is_one_sentence():
+    # hello=2 world=1 -> 3 syllables, 2 words, 1 sentence:
+    # 206.835 - 1.015*2 - 84.6*1.5 = 77.905
+    assert flesch_reading_ease("hello world") == pytest.approx(77.905)
+
+
+def test_flesch_rejects_text_without_words():
+    with pytest.raises(ValueError, match="no words"):
+        flesch_reading_ease("?!.")
+
+
+def test_mean_flesch_is_mean_of_per_fable_scores():
+    assert mean_flesch_reading_ease(
+        ["The cat sat on the mat.", "hello world"]
+    ) == pytest.approx((116.145 + 77.905) / 2)
+
+
+def test_mean_flesch_rejects_empty_set():
+    with pytest.raises(ValueError, match="at least one"):
+        mean_flesch_reading_ease([])
