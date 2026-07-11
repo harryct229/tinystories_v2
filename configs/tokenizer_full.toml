@@ -1,0 +1,7 @@
+# Real tokenizer (ADR-0003): vocab 8192, trained on a 200k-Fable sample of the
+# pretrain split produced by: ts2-data-prep --config configs/data_prep_full.toml
+out_dir = "artifacts/tokenizer_full"
+corpus = ["artifacts/data_prep_full/splits/pretrain.jsonl"]
+text_field = "fable"
+vocab_size = 8192
+max_docs = 200000
