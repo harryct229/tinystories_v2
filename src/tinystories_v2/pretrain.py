@@ -28,7 +28,7 @@ from tinystories_v2 import __version__
 from tinystories_v2.checkpoint import (
     latest_checkpoint, load_checkpoint, prune_checkpoints, save_checkpoint,
 )
-from tinystories_v2.config import load_config
+from tinystories_v2.config import load_config, load_env
 from tinystories_v2.hub import fetch_from, try_sync_to
 from tinystories_v2.tracking import MetricsLogger
 from tinystories_v2.model import FableLM, ModelConfig
@@ -59,6 +59,7 @@ def build_optimizer(model: FableLM, peak_lr: float, betas: tuple[float, float],
 
 
 def run(config: dict, resume: bool = False) -> dict:
+    load_env()  # W&B/HF keys from .env before wandb.init or hub sync; never printed
     train = config["train"]
     out_dir = Path(config["out_dir"])
     ckpt_dir = out_dir / "checkpoints"

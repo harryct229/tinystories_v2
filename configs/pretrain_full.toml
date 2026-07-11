@@ -40,5 +40,4 @@ project = "tinystories-v2"
 run_name = "pretrain-500M"
 
 [hub]
-# Edit to the team's private repo before the real run, e.g. "hf://<org>/tinystories-v2-pretrain"
-target = "hf://CHANGE-ME/tinystories-v2-pretrain"
+target = "hf://congthanh991/tinystories-v2-pretrain"
