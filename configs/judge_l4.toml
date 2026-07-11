@@ -1,0 +1,7 @@
+[judge]
+kind = "transformers"
+model_id = "Qwen/Qwen3-8B"
+precision = "fp16"
+device = "cuda"
+enable_thinking = false
+max_new_tokens = 4

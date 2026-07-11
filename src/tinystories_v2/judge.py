@@ -3,9 +3,10 @@
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, astuple, dataclass
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from tinystories_v2.preferences import (
     PreferencePair,
@@ -180,3 +181,158 @@ def judge_with_order_swap(
         ),
     )
     return validate_preference_pair(pair.to_dict())
+
+
+class TransformersJudge:
+    """Pairwise local-model Judge backed by one lazy Transformers code path."""
+
+    def __init__(
+        self,
+        model_id: str,
+        precision: str,
+        device: str,
+        enable_thinking: bool | None = None,
+        max_new_tokens: int = 4,
+    ) -> None:
+        if not model_id.strip():
+            raise ValueError("model_id must be a non-empty string")
+        if precision not in {"fp16", "bf16"}:
+            raise ValueError("precision must be 'fp16' or 'bf16'")
+        if not device.strip():
+            raise ValueError("device must be a non-empty string")
+        if enable_thinking is not None and type(enable_thinking) is not bool:
+            raise ValueError("enable_thinking must be bool or omitted")
+        if (
+            type(max_new_tokens) is not int
+            or max_new_tokens < 1
+        ):
+            raise ValueError("max_new_tokens must be a positive integer")
+
+        self.model_id = model_id
+        self.precision = precision
+        self.device = device
+        self.enable_thinking = enable_thinking
+        self.max_new_tokens = max_new_tokens
+        self._backend: tuple[Any, Any, Any] | None = None
+
+    @property
+    def judge_id(self) -> str:
+        if self.enable_thinking is None:
+            thinking_mode = "default"
+        else:
+            thinking_mode = str(self.enable_thinking).lower()
+        return (
+            f"transformers:{self.model_id};precision={self.precision};"
+            f"thinking={thinking_mode};rubric={RUBRIC_VERSION}"
+        )
+
+    def _load_backend(self) -> tuple[Any, Any, Any]:
+        if self._backend is not None:
+            return self._backend
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                "real Judge dependencies are missing; "
+                "install with: uv pip install -e '.[judge]'"
+            ) from exc
+
+        dtype = {
+            "fp16": torch.float16,
+            "bf16": torch.bfloat16,
+        }[self.precision]
+        tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        model = AutoModelForCausalLM.from_pretrained(
+            self.model_id,
+            torch_dtype=dtype,
+        )
+        model = model.to(self.device)
+        model.eval()
+        self._backend = (torch, tokenizer, model)
+        return self._backend
+
+    def compare(
+        self,
+        scaffold: Scaffold,
+        fable_a: str,
+        fable_b: str,
+    ) -> Verdict:
+        _validate_candidates(fable_a, fable_b)
+        torch, tokenizer, model = self._load_backend()
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Follow the pairwise Fable rubric and return only its "
+                    "requested verdict label."
+                ),
+            },
+            {
+                "role": "user",
+                "content": render_rubric_prompt(
+                    scaffold,
+                    fable_a,
+                    fable_b,
+                ),
+            },
+        ]
+        template_options: dict[str, Any] = {}
+        if self.enable_thinking is not None:
+            template_options["enable_thinking"] = self.enable_thinking
+        inputs = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+            **template_options,
+        ).to(self.device)
+
+        with torch.inference_mode():
+            generated = model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        prompt_length = inputs["input_ids"].shape[-1]
+        raw_output = tokenizer.decode(
+            generated[0][prompt_length:],
+            skip_special_tokens=True,
+        )
+        return parse_verdict(raw_output)
+
+
+def _required_config_string(
+    config: Mapping[str, Any],
+    key: str,
+) -> str:
+    value = config.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Judge config {key!r} must be a non-empty string")
+    return value.strip()
+
+
+def build_judge(config: Mapping[str, Any]) -> Judge:
+    """Construct a fake or real Judge without loading real model weights."""
+
+    kind = config.get("kind")
+    if kind == "fake_slot_coverage":
+        return SlotCoverageFakeJudge()
+    if kind == "fake_position_biased":
+        return PositionBiasedFakeJudge()
+    if kind == "transformers":
+        device = config.get("device", "cuda")
+        if not isinstance(device, str) or not device.strip():
+            raise ValueError(
+                "Judge config 'device' must be a non-empty string"
+            )
+        return TransformersJudge(
+            model_id=_required_config_string(config, "model_id"),
+            precision=_required_config_string(config, "precision"),
+            device=device.strip(),
+            enable_thinking=config.get("enable_thinking"),
+            max_new_tokens=config.get("max_new_tokens", 4),
+        )
+    raise ValueError(f"unknown Judge kind: {kind!r}")

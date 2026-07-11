@@ -15,6 +15,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+judge = [
+    "torch>=2.3",
+    "transformers>=4.51.0",
+]
 
 [project.scripts]
 ts2-data-prep = "tinystories_v2.data:main"
