@@ -27,11 +27,18 @@ class MetricsLogger:
                     stacklevel=2,
                 )
             else:
-                self._run = wandb.init(
-                    project=wandb_config.get("project", "tinystories-v2"),
-                    name=wandb_config.get("run_name"),
-                    resume="allow",
-                )
+                try:
+                    self._run = wandb.init(
+                        project=wandb_config.get("project", "tinystories-v2"),
+                        name=wandb_config.get("run_name"),
+                        resume="allow",
+                    )
+                except Exception:
+                    warnings.warn(
+                        "wandb enabled in config but init failed; "
+                        "logging to metrics.jsonl only",
+                        stacklevel=2,
+                    )
 
     def log(self, metrics: dict, step: int) -> None:
         self._file.write(json.dumps({"step": step, **metrics}) + "\n")

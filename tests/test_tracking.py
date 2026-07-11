@@ -65,6 +65,19 @@ def test_degrades_to_jsonl_when_wandb_missing(tmp_path, monkeypatch):
     assert read_lines(tmp_path) == [{"step": 1, "loss": 1.0}]
 
 
+def test_degrades_to_jsonl_when_wandb_init_fails(tmp_path, monkeypatch):
+    fake = types.ModuleType("wandb")
+    def failing_init(**kw):
+        raise RuntimeError("no network")
+    fake.init = failing_init
+    monkeypatch.setitem(sys.modules, "wandb", fake)
+    with pytest.warns(UserWarning, match="wandb"):
+        logger = MetricsLogger(tmp_path, {"enabled": True, "project": "p"})
+    logger.log({"loss": 1.0}, step=1)
+    logger.finish()
+    assert read_lines(tmp_path) == [{"step": 1, "loss": 1.0}]
+
+
 def test_disabled_wandb_never_imported(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "wandb", None)
     logger = MetricsLogger(tmp_path, {"enabled": False})  # must not raise or warn
