@@ -67,9 +67,20 @@ def run(config: dict, resume: bool = False) -> dict:
 
     # -- data: pack once, reuse thereafter (the packed binary is its own artifact)
     packed_path = Path(config["data"]["packed_path"])
-    if not packed_path.exists():
+    manifest_path = Path(str(packed_path) + ".json")
+    if not packed_path.exists() or not manifest_path.exists():
         pack_split(config["data"]["split_path"],
                    config["data"]["tokenizer_path"], packed_path)
+    else:
+        pack_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_vocab = config["model"]["vocab_size"]
+        if pack_manifest["vocab_size"] != expected_vocab:
+            raise ValueError(
+                f"packed binary at {packed_path} was built with vocab_size="
+                f"{pack_manifest['vocab_size']}, but config requests vocab_size="
+                f"{expected_vocab}. Delete the stale packed binary (and its "
+                f".json manifest) to re-pack, or fix the config."
+            )
     data = load_packed(packed_path)
 
     # -- precision knob: fp32 | bf16 (autocast) | fp16 (autocast + GradScaler)

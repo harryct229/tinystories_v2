@@ -85,6 +85,34 @@ def test_packing_skipped_when_binary_exists(tmp_path, fixture_path, tokenizer_pa
     assert Path(config["data"]["packed_path"]).stat().st_mtime_ns == before
 
 
+def test_packed_reuse_with_mismatched_vocab_raises(tmp_path, fixture_path, tokenizer_path):
+    config = toy_config(tmp_path, fixture_path, tokenizer_path, steps=2, checkpoint_every=2)
+    run(config)
+    config["out_dir"] = str(tmp_path / "out2")
+    config["model"]["vocab_size"] = 1024  # drifts from the packed binary's 512
+    with pytest.raises(ValueError, match="vocab"):
+        run(config)
+
+
+def test_packed_binary_without_manifest_is_repacked(tmp_path, fixture_path, tokenizer_path):
+    config = toy_config(tmp_path, fixture_path, tokenizer_path, steps=2, checkpoint_every=2)
+    run(config)
+    packed = Path(config["data"]["packed_path"])
+    Path(str(packed) + ".json").unlink()
+    config["out_dir"] = str(tmp_path / "out2")
+    run(config)  # must not raise; manifest restored
+    assert Path(str(packed) + ".json").exists()
+
+
+@pytest.mark.parametrize("precision", ["bf16", "fp16"])
+def test_mixed_precision_loop_runs_on_cpu(tmp_path, fixture_path, tokenizer_path, precision):
+    config = toy_config(tmp_path, fixture_path, tokenizer_path, steps=2,
+                        checkpoint_every=2, precision=precision)
+    summary = run(config)
+    assert summary["step"] == 2
+    assert math.isfinite(summary["loss"])
+
+
 def test_lr_schedule_warmup_peak_cosine_floor():
     peak = 6e-4
     kwargs = {"total_steps": 1000, "peak_lr": peak,
