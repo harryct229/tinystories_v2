@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import huggingface_hub
 import pytest
@@ -124,3 +125,26 @@ def test_fetch_file_from_hf_dispatches_to_hf_hub_download(tmp_path, monkeypatch)
     assert calls == {"repo_id": "someone/some-repo",
                      "filename": "splits/pref.jsonl", "repo_type": "model"}
     assert dest.read_text(encoding="utf-8") == '{"y": 2}\n'
+
+
+def test_fetch_file_from_falls_back_to_dataset_repo(tmp_path, monkeypatch):
+    # The data-splits repo is a dataset repo (the real labeling run 404'd on
+    # the hardcoded model type); fetch_file_from must try dataset next, like
+    # scripts/sft_colab.py's downloader.
+    calls = []
+    fake_response = SimpleNamespace(headers={}, request=None)
+
+    def fake_download(*, repo_id, filename, repo_type):
+        calls.append(repo_type)
+        if repo_type == "model":
+            raise huggingface_hub.utils.RepositoryNotFoundError(
+                "not a model", response=fake_response)
+        src = tmp_path / "downloaded.jsonl"
+        src.write_text('{"z": 3}\n', encoding="utf-8")
+        return str(src)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    dest = tmp_path / "dest" / "pref.jsonl"
+    fetch_file_from("hf://someone/data-repo", "splits/pref.jsonl", dest)
+    assert calls == ["model", "dataset"]
+    assert dest.read_text(encoding="utf-8") == '{"z": 3}\n'

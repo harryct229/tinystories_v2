@@ -80,15 +80,24 @@ def fetch_from(target: str, local_dir: Path) -> None:
 def fetch_file_from(target: str, relative_path: str, dest: Path) -> None:
     """Fetch one file from a sync target (additive, like fetch_from) — for
     repos where a full snapshot would pull far more than needed (e.g. the
-    data repo's ~1 GB pretrain split when only splits/pref.jsonl is wanted)."""
+    data repo's ~1 GB pretrain split when only splits/pref.jsonl is wanted).
+    Tries the model repo type first, then dataset: the data-splits repo is a
+    dataset repo, everything else this project syncs is a model repo (same
+    tolerance as scripts/sft_colab.py's downloader)."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if target.startswith(_HF_PREFIX):
         load_env()
         repo_id = target[len(_HF_PREFIX):]
-        source = Path(huggingface_hub.hf_hub_download(
-            repo_id=repo_id, filename=relative_path, repo_type="model"
-        ))
+        try:
+            downloaded = huggingface_hub.hf_hub_download(
+                repo_id=repo_id, filename=relative_path, repo_type="model"
+            )
+        except huggingface_hub.utils.RepositoryNotFoundError:
+            downloaded = huggingface_hub.hf_hub_download(
+                repo_id=repo_id, filename=relative_path, repo_type="dataset"
+            )
+        source = Path(downloaded)
     else:
         source = Path(target) / relative_path
     tmp = dest.with_name(dest.name + ".tmp")
