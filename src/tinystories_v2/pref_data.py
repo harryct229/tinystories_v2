@@ -29,6 +29,15 @@ synced to [hub].target.
 
 import hashlib
 
+from tokenizers import Tokenizer
+
+from tinystories_v2.generate import sample
+from tinystories_v2.judge import Judge, judge_with_order_swap
+from tinystories_v2.model import FableLM
+from tinystories_v2.preferences import PreferencePair
+from tinystories_v2.slot_prompt import END_TOKEN, render_prompt
+from tinystories_v2.slots import Scaffold
+
 
 def pair_indices(n_completions: int, n_pairs: int) -> list[tuple[int, int]]:
     """The first n_pairs of a round-robin (circle method) schedule over all
@@ -63,3 +72,48 @@ def scaffold_seed(seed: int, prompt_hash: str) -> int:
     data.assign_split's hashing)."""
     digest = hashlib.sha256(f"{seed}:{prompt_hash}".encode()).digest()
     return int.from_bytes(digest[:8], "big") % 2**63
+
+
+def sample_completions(model: FableLM, tokenizer: Tokenizer,
+                       scaffold: Scaffold, *, num_completions: int,
+                       max_new_tokens: int, temperature: float, top_p: float,
+                       seed: int, device: str = "cpu") -> list[str]:
+    """N seeded completions of a Scaffold's Slot Prompt: decoded fable bodies
+    (the prompt prefix and special tokens are excluded; decode drops <|end|>)."""
+    prompt_ids = tokenizer.encode(render_prompt(scaffold)).ids
+    sequences = sample(
+        model, prompt_ids, num_samples=num_completions,
+        max_new_tokens=max_new_tokens, temperature=temperature, top_p=top_p,
+        seed=seed, end_id=tokenizer.token_to_id(END_TOKEN), device=device,
+    )
+    return [tokenizer.decode(seq[len(prompt_ids):]).strip()
+            for seq in sequences]
+
+
+def _degenerate(fable_a: str, fable_b: str) -> bool:
+    """True when the Judge could not accept this pair: empty or effectively
+    identical candidates (same normalization the Judge seam validates with)."""
+    normalize = lambda text: " ".join(text.casefold().split())  # noqa: E731
+    a, b = normalize(fable_a), normalize(fable_b)
+    return not a or not b or a == b
+
+
+def label_scaffold(judge: Judge, scaffold: Scaffold, completions: list[str],
+                   n_pairs: int) -> tuple[list[PreferencePair], dict[str, int]]:
+    """Form the round-robin pairs and label each through order-swap
+    consistency filtering. Degenerate pairs are skipped before the Judge sees
+    them; inconsistent verdicts are discarded (position-bias filter)."""
+    pairs: list[PreferencePair] = []
+    counters = {"kept": 0, "discarded_inconsistent": 0, "skipped_degenerate": 0}
+    for i, j in pair_indices(len(completions), n_pairs):
+        fable_a, fable_b = completions[i], completions[j]
+        if _degenerate(fable_a, fable_b):
+            counters["skipped_degenerate"] += 1
+            continue
+        pair = judge_with_order_swap(judge, scaffold, fable_a, fable_b)
+        if pair is None:
+            counters["discarded_inconsistent"] += 1
+        else:
+            counters["kept"] += 1
+            pairs.append(pair)
+    return pairs, counters
