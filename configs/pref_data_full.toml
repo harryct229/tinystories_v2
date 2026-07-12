@@ -2,6 +2,11 @@
 # completions per Scaffold at temperature 1.0 / top-p 0.95, 3 pairs per
 # Scaffold, Qwen3-8B fp16 Judge on the L4 — on a T4 set
 # model_id = "Qwen/Qwen3-4B-Instruct-2507").
+# Judge method: logit-margin debiasing (kind = "transformers_margin"). The
+# first real run showed greedy A/B verdicts saturate at 'A' for same-model
+# completions (position prior p~1.0), so order-swap discarded 100% of pairs;
+# the margin cancels that prior exactly. margin_threshold is calibrated
+# against thinking-mode ground truth (see the calibration note in PROGRESS).
 # Prerequisites on the Hub, all fetched automatically on a fresh VM: the
 # issue 03 SFT checkpoint, the pref split, and the tokenizer.
 # Resumable offline batch: rerun with --resume after a preemption and the run
@@ -30,12 +35,11 @@ max_new_tokens = 400
 seed = 1337
 
 [judge]
-kind = "transformers"
+kind = "transformers_margin"
 model_id = "Qwen/Qwen3-8B"
 precision = "fp16"
 device = "cuda"
-enable_thinking = false
-max_new_tokens = 4
+margin_threshold = 1.0   # placeholder until the calibration run pins it
 
 [hub]
 target = "hf://congthanh991/tinystories-v2-pref-pairs"

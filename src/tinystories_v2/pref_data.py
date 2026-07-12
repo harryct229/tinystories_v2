@@ -46,8 +46,8 @@ from tinystories_v2.config import load_config, load_env
 from tinystories_v2.generate import sample
 from tinystories_v2.hub import fetch_file_from, fetch_from, try_sync_to
 from tinystories_v2.judge import (
-    Judge, JudgeOutputError, build_judge, judge_with_order_swap,
-    normalize_text,
+    Judge, JudgeOutputError, build_judge, judge_with_margin,
+    judge_with_order_swap, normalize_text,
 )
 from tinystories_v2.model import FableLM, ModelConfig
 from tinystories_v2.preferences import SCHEMA_VERSION, PreferencePair
@@ -115,19 +115,22 @@ def _degenerate(fable_a: str, fable_b: str) -> bool:
 
 def label_scaffold(judge: Judge, scaffold: Scaffold, completions: list[str],
                    n_pairs: int) -> tuple[list[PreferencePair], dict[str, int]]:
-    """Form the round-robin pairs and label each through order-swap
-    consistency filtering. Degenerate pairs are skipped before the Judge sees
-    them; inconsistent verdicts are discarded (position-bias filter)."""
+    """Form the round-robin pairs and label each through the Judge's filter:
+    order-swap consistency for verdict judges, the margin threshold for
+    margin judges (both discards land in discarded_inconsistent). Degenerate
+    pairs are skipped before the Judge sees them."""
     pairs: list[PreferencePair] = []
     counters = {"kept": 0, "discarded_inconsistent": 0,
                "skipped_degenerate": 0, "judge_error": 0}
+    label_pair = (judge_with_margin if hasattr(judge, "margin")
+                  else judge_with_order_swap)
     for i, j in pair_indices(len(completions), n_pairs):
         fable_a, fable_b = completions[i], completions[j]
         if _degenerate(fable_a, fable_b):
             counters["skipped_degenerate"] += 1
             continue
         try:
-            pair = judge_with_order_swap(judge, scaffold, fable_a, fable_b)
+            pair = label_pair(judge, scaffold, fable_a, fable_b)
         except JudgeOutputError:
             # One malformed verdict must not wedge the offline batch: resume
             # replays the same seed -> same completions -> same greedy Judge

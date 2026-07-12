@@ -254,14 +254,13 @@ class TransformersJudge:
         self._backend = (torch, tokenizer, model)
         return self._backend
 
-    def compare(
+    def _chat_inputs(
         self,
+        tokenizer: Any,
         scaffold: Scaffold,
         fable_a: str,
         fable_b: str,
-    ) -> Verdict:
-        _validate_candidates(fable_a, fable_b)
-        torch, tokenizer, model = self._load_backend()
+    ) -> Any:
         messages = [
             {
                 "role": "system",
@@ -282,7 +281,7 @@ class TransformersJudge:
         template_options: dict[str, Any] = {}
         if self.enable_thinking is not None:
             template_options["enable_thinking"] = self.enable_thinking
-        inputs = tokenizer.apply_chat_template(
+        return tokenizer.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=True,
@@ -290,6 +289,16 @@ class TransformersJudge:
             return_tensors="pt",
             **template_options,
         ).to(self.device)
+
+    def compare(
+        self,
+        scaffold: Scaffold,
+        fable_a: str,
+        fable_b: str,
+    ) -> Verdict:
+        _validate_candidates(fable_a, fable_b)
+        torch, tokenizer, model = self._load_backend()
+        inputs = self._chat_inputs(tokenizer, scaffold, fable_a, fable_b)
 
         with torch.inference_mode():
             generated = model.generate(
@@ -304,6 +313,123 @@ class TransformersJudge:
             skip_special_tokens=True,
         )
         return parse_verdict(raw_output)
+
+
+class MarginTransformersJudge(TransformersJudge):
+    """Position-debiased pairwise Judge: reads the A/B first-token logits for
+    both presentation orders and keeps only the antisymmetric (content) part.
+
+    The additive position prior cancels exactly in
+        margin = (s_first - s_swapped) / 2,   s = logit("A") - logit("B"),
+    because the prior enters both presentations with the same sign while the
+    content differential flips. Motivation: on issue 04's real run the greedy
+    verdict prior saturated p("A") ~= 1.0 for same-model completions, so
+    argmax verdicts carried no content signal and order-swap filtering
+    discarded 100% of pairs — the logit margin still resolves the content
+    term. Positive margin means fable_a is the debiased winner; |margin| at
+    or below margin_threshold means no reliable signal and judge_with_margin
+    discards the pair (the margin analog of the order-swap discard)."""
+
+    def __init__(
+        self,
+        model_id: str,
+        precision: str,
+        device: str,
+        margin_threshold: float,
+        enable_thinking: bool = False,
+    ) -> None:
+        if enable_thinking:
+            raise ValueError(
+                "margin judging reads first-token logits; a thinking prefix "
+                "would displace the verdict token — enable_thinking must "
+                "stay false"
+            )
+        if type(margin_threshold) not in (int, float) or margin_threshold < 0:
+            raise ValueError(
+                "margin_threshold must be a non-negative number"
+            )
+        super().__init__(
+            model_id=model_id,
+            precision=precision,
+            device=device,
+            enable_thinking=False,
+        )
+        self.margin_threshold = float(margin_threshold)
+
+    @property
+    def judge_id(self) -> str:
+        return (
+            f"transformers-margin:{self.model_id};"
+            f"precision={self.precision};tau={self.margin_threshold};"
+            f"rubric={RUBRIC_VERSION}"
+        )
+
+    def _verdict_logit_gap(
+        self,
+        scaffold: Scaffold,
+        fable_a: str,
+        fable_b: str,
+    ) -> float:
+        """logit("A") - logit("B") at the first verdict-token position."""
+        torch, tokenizer, model = self._load_backend()
+        a_ids = tokenizer.encode("A", add_special_tokens=False)
+        b_ids = tokenizer.encode("B", add_special_tokens=False)
+        if len(a_ids) != 1 or len(b_ids) != 1:
+            raise JudgeOutputError(
+                f"'A' and 'B' must each be a single token for "
+                f"{self.model_id}"
+            )
+        inputs = self._chat_inputs(tokenizer, scaffold, fable_a, fable_b)
+        with torch.inference_mode():
+            logits = model(**inputs).logits[0, -1]
+        return float(logits[a_ids[0]] - logits[b_ids[0]])
+
+    def margin(
+        self,
+        scaffold: Scaffold,
+        fable_a: str,
+        fable_b: str,
+    ) -> float:
+        _validate_candidates(fable_a, fable_b)
+        s_first = self._verdict_logit_gap(scaffold, fable_a, fable_b)
+        s_swapped = self._verdict_logit_gap(scaffold, fable_b, fable_a)
+        return (s_first - s_swapped) / 2.0
+
+
+def judge_with_margin(
+    judge: Any,
+    scaffold: Scaffold,
+    fable_a: str,
+    fable_b: str,
+) -> PreferencePair | None:
+    """Retain the debiased margin winner, or discard when the content signal
+    does not clear the judge's threshold (the margin analog of the order-swap
+    discard). `judge` provides margin(), margin_threshold, and judge_id. The
+    pass labels record the winner under both presentations — consistent by
+    construction, since the margin is order-symmetric."""
+
+    margin = judge.margin(scaffold, fable_a, fable_b)
+    if abs(margin) <= judge.margin_threshold:
+        return None
+    if margin > 0:
+        chosen, rejected = fable_a, fable_b
+        first_pass, swapped_pass = Verdict.A, Verdict.B
+    else:
+        chosen, rejected = fable_b, fable_a
+        first_pass, swapped_pass = Verdict.B, Verdict.A
+
+    pair = PreferencePair(
+        scaffold=scaffold,
+        chosen=chosen,
+        rejected=rejected,
+        verdict=VerdictMetadata(
+            judge_id=judge.judge_id,
+            first_pass=first_pass.value,
+            swapped_pass=swapped_pass.value,
+            consistent=True,
+        ),
+    )
+    return validate_preference_pair(pair.to_dict())
 
 
 def _required_config_string(
@@ -336,5 +462,22 @@ def build_judge(config: Mapping[str, Any]) -> Judge:
             device=device.strip(),
             enable_thinking=config.get("enable_thinking"),
             max_new_tokens=config.get("max_new_tokens", 4),
+        )
+    if kind == "transformers_margin":
+        device = config.get("device", "cuda")
+        if not isinstance(device, str) or not device.strip():
+            raise ValueError(
+                "Judge config 'device' must be a non-empty string"
+            )
+        threshold = config.get("margin_threshold")
+        if type(threshold) not in (int, float):
+            raise ValueError(
+                "Judge config 'margin_threshold' must be a number"
+            )
+        return MarginTransformersJudge(
+            model_id=_required_config_string(config, "model_id"),
+            precision=_required_config_string(config, "precision"),
+            device=device.strip(),
+            margin_threshold=threshold,
         )
     raise ValueError(f"unknown Judge kind: {kind!r}")

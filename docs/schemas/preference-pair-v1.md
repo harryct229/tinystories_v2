@@ -45,6 +45,14 @@ Equal labels reveal position bias or another inconsistency. Such a comparison
 is discarded and is not a preference-pair record. Consequently every stored
 v1 record has `consistent = true` and opposite pass labels.
 
+Margin judges (`judge_id` prefix `transformers-margin:`) decide from the
+debiased A/B logit margin measured across both presentation orders, so their
+verdict is order-symmetric by construction: the pass labels record the winner
+under each presentation and are always opposite. Pairs whose |margin| does
+not clear the judge's threshold (`tau` in `judge_id`) are discarded, playing
+the same filtering role the order-swap inconsistency discard plays for
+verdict judges.
+
 ## Consumer contract
 
 Decode each JSONL line and pass it through

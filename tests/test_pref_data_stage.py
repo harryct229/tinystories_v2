@@ -282,9 +282,12 @@ def test_full_config_pins_design_doc_defaults():
     assert config["sampling"]["temperature"] == 1.0
     assert config["sampling"]["top_p"] == 0.95
     assert config["sampling"]["pairs_per_scaffold"] == 3
-    assert config["judge"]["kind"] == "transformers"
+    # Margin judging replaced greedy verdicts after the first real run showed
+    # a saturating position prior (100% order-swap discards).
+    assert config["judge"]["kind"] == "transformers_margin"
     assert config["judge"]["model_id"] == "Qwen/Qwen3-8B"
     assert config["judge"]["precision"] == "fp16"
+    assert config["judge"]["margin_threshold"] > 0
     assert config["hub"]["target"].startswith("hf://")
     assert config["checkpoint"]["hub_source"].startswith("hf://")
     assert config["data"]["hub_source"].startswith("hf://")
