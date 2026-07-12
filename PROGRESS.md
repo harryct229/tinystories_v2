@@ -14,11 +14,12 @@ _Last updated: 2026-07-12_
   Model + all data artifacts on private HF Hub under `congthanh991` (see Log).
   Note: no W&B dashboard this run (the `[track]` extra wasn't installed on the
   VM) — metrics live in `metrics.jsonl`, synced to the Hub checkpoint repo.
-- ✅ **Issue 03 (SFT stage + demo) code complete** — `ts2-sft` stage,
-  `ts2-demo` script, and the thin `sft_colab.ipynb` all landed with tests
-  green. The real SFT run consumes issue 02's now-published Pretraining
-  checkpoint. Unblocks **issue 04** (preference labeling); with issue 11 now
-  complete, **issue 07** (evaluation) is also ready for code work.
+- ✅ **Issue 03 (SFT + demo) done — real SFT run complete.** ~29.9M FableLM
+  fine-tuned 800 steps / 50,572 examples on Colab L4 (bf16), final masked loss
+  **1.083** (from ~1.29 at the pretrained init). Model on the private HF Hub
+  (`congthanh991/tinystories-v2-sft`); `ts2-demo` generates coherent
+  Scaffold-conditioned fables (W&B dashboard live this run). Unblocks **issue 04**
+  (preference labeling); with issue 11 done, **issue 07** (evaluation) is ready too.
 - ✅ **Issue 11 (reference-free metrics) complete** — pooled and paper-aligned
   per-Fable Distinct-n, seeded Self-BLEU, Flesch Reading Ease, and a lazy-Torch
   held-out perplexity helper are merged with CPU-only deterministic tests.
@@ -38,14 +39,14 @@ _Last updated: 2026-07-12_
 | 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | 🟢 ready (code work) |
 | 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
-| 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ code complete (real run ready — 02 checkpoint on Hub) |
-| 04 | Preference labeling stage | 03 ✅code, 10 ✅ | 🟢 ready (code work) |
-| 07 | Evaluation suite | 03 ✅code, 10 ✅, 11 ✅ | 🟢 ready (code work) |
+| 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
+| 04 | Preference labeling stage | 03 ✅, 10 ✅ | 🟢 ready — SFT checkpoint on Hub |
+| 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | 🟢 ready (code work) |
 | 06 | GRPO stage | 05 ⏳, 11 ✅ | 🔴 blocked on issue 05 |
 
-Production-run gates (beyond code): 05 and 08 need 03's SFT checkpoint and
-04's real labels; 06 additionally needs 05's Reward Model to clear the
-accuracy gate (~68% held-out pair accuracy).
+Production-run gates (beyond code): 03's SFT checkpoint is now on the Hub; 05
+and 08 still need 04's real labels; 06 additionally needs 05's Reward Model to
+clear the accuracy gate (~68% held-out pair accuracy).
 
 ## Milestones vs plan (`docs/DESIGN.md`)
 
@@ -53,13 +54,23 @@ accuracy gate (~68% held-out pair accuracy).
 |------|---------|--------|
 | W1 | repo skeleton, tokenizer, splits, packed data | ✅ done 2026-07-11 (day 1) |
 | W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
-| W3 | SFT | issue 12 ✅ + SFT (03) code-complete 2026-07-12; real run uses 02's Hub checkpoint |
+| W3 | SFT | issue 12 ✅ + SFT (03) done 2026-07-12 — real run complete, final loss 1.083, model on Hub |
 | W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling waits on SFT |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
 | W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
 
 ## Log
 
+- **2026-07-12** — **Issue 03 SFT run complete.** Fine-tuned the pretrained
+  ~29.9M FableLM for 800 steps on all 50,572 sft-split examples (Colab L4,
+  bf16, LR 1e-4 cosine, `grad_accum` 8), final masked loss 1.083 (from ~1.29
+  at init). Smoke-run validated the real-scale wiring first, then the full run;
+  checkpoints synced to `hf://congthanh991/tinystories-v2-sft` (step_000800.pt),
+  with a live W&B dashboard (Colab preinstalls `wandb`). `ts2-demo` produces
+  coherent Scaffold-conditioned fables — the base model can't follow a Slot
+  Prompt, the SFT model does. Ran via the one-command bootstrap
+  `scripts/sft_colab.py`; the L4 was preempted just after the final Hub sync
+  (harmless — `--resume` would have recovered). Unblocks issue 04.
 - **2026-07-12** — Issue 11 (reference-free metrics library) complete and
   merged to main: shared word tokenization, pooled `distinct_n`,
   paper-comparable `mean_distinct_n`, seeded Self-BLEU, Flesch Reading Ease,
@@ -102,7 +113,8 @@ accuracy gate (~68% held-out pair accuracy).
 
 - Training runs on Colab (L4, driven by the `colab` CLI), not a dedicated VM.
   L4 bf16 held ~66k+ tokens/sec; the DESIGN.md compute/budget section is
-  broadly accurate. Enable the `[track]` extra for a W&B dashboard on the next
-  real run if the team wants one (this run used Hub-synced `metrics.jsonl`).
+  broadly accurate. W&B needs no `[track]` extra — Colab preinstalls `wandb`,
+  and the SFT run logged a live dashboard once `WANDB_API_KEY` was in `.env`
+  (the pretrain run used Hub-synced `metrics.jsonl` only).
 - L4 sessions get preempted ~hourly on this account — a real SFT/RM/GRPO run
   must checkpoint frequently and rely on `--resume` (already the contract).
