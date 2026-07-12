@@ -32,7 +32,9 @@
 - `src/tinystories_v2/gate.py` — the shared accuracy gate: `DEFAULT_ACCURACY_GATE`, `RewardGateError`, `load_reward_manifest`, `check_reward_gate`.
 - `configs/reward_fixture.toml` — toy CPU wiring config.
 - `configs/reward_full.toml` — real Colab Reward Model config (design-doc defaults).
-- `notebooks/reward_colab.ipynb` — thin Colab wrapper for the real Reward Model run.
+- `src/tinystories_v2/hub_download.py` — shared retry-wrapped single-file Hub download (`retry`, `download_file`) used by the Colab bootstrap scripts; extracted from `sft_colab.py` so the reward (and later GRPO) bootstrap does not copy it a third time.
+- `scripts/reward_colab.py` — one-command Colab bootstrap for the real Reward Model run (download tokenizer + preference pairs, then `ts2-reward --resume`), adapting `scripts/sft_colab.py` per `docs/colab-notes.md`.
+- `notebooks/reward_colab.ipynb` — thin Colab wrapper (documented parallel path; the real run uses `scripts/reward_colab.py`).
 - `docs/schemas/reward-model-artifact-v1.md` — the manifest metadata + gate contract.
 - `tests/test_model_hidden_states.py` — the `FableLM.hidden_states` seam (shape + forward-unchanged).
 - `tests/test_reward_model.py` — `RewardModel` scoring: shape `[B]`, batched, padding-invariance, backbone loads SFT weights strictly, Bradley-Terry + accuracy primitives.
@@ -40,14 +42,20 @@
 - `tests/test_reward_stage.py` — stage: held-out accuracy above chance on synthetically separable fake-Judge pairs; artifacts/manifest record accuracy + split recipe; scoring usable downstream; init-from-real-checkpoint; arch-mismatch raises; CLI.
 - `tests/test_reward_resume.py` — kill-and-resume bitwise-identical contract.
 - `tests/test_reward_gate.py` — gate: below-gate raises with a clear message; above-gate returns accuracy; non-Reward-Model / missing-accuracy manifests raise.
+- `tests/test_reward_colab.py` — the bootstrap orchestration (download → `ts2-reward --resume`) with an injected download; wiring + idempotence + `resume=True`.
 
 **Modify:**
 - `src/tinystories_v2/model.py` — extract `FableLM.hidden_states`; `forward` calls it (behavior identical).
 - `pyproject.toml` — add the `ts2-reward` console-script entrypoint.
+- `scripts/sft_colab.py` — replace its local `retry` + `download_file` with an import from the new `hub_download` module (behavior identical; `tests/test_sft_colab.py` stays green).
 - `tests/test_notebook.py` — add thin-wrapper + no-secrets tests for `reward_colab.ipynb`.
 - `PROGRESS.md` — mark issue 05 code-complete and unblock issue 06 (final task).
 
-**Read-only references (do not modify):** `sft.py` (stage template), `pretrain.py` (imports `lr_at`, `build_optimizer`), `preferences.py`, `judge.py`, `slot_prompt.py`, `slots.py`, `checkpoint.py`, `tracking.py`, `hub.py`, `config.py`, `generate.py`, `tests/conftest.py` (reuses `make_init_checkpoint`).
+**Read-only references (do not modify):** `sft.py` (stage template), `pretrain.py` (imports `lr_at`, `build_optimizer`), `preferences.py`, `judge.py`, `slot_prompt.py`, `slots.py`, `checkpoint.py`, `tracking.py`, `hub.py`, `config.py`, `generate.py`, `tests/conftest.py` (reuses `make_init_checkpoint`), `scripts/sft_colab.py` + `tests/test_sft_colab.py` (bootstrap template), `docs/colab-notes.md` (real-run procedure).
+
+## Colab Run Procedure (from `docs/colab-notes.md`)
+
+The real Reward Model run is **not** driven from the notebook — it uses the one-command bootstrap over the `colab` CLI, exactly like the issue 03 SFT run. Before running: `git push origin main` (the VM clones from GitHub — local-only commits are missing), then `colab upload .env /content/tinystories_v2/.env` (never pass tokens in an `exec`). Run in-kernel via `colab exec -f scripts/reward_colab.py` (never nohup-detach — idle VMs get reaped); background long commands with a log + `EXIT_` marker and poll in <20 s exec calls; wrap CLI calls in a 3–6 try retry loop. `--resume` is idempotent: after an L4 preemption, re-running the bootstrap pulls the last Hub checkpoint and continues. The Hub is the source of truth (list `checkpoints/step_*.pt` + read `manifest.json`), not the VM. Always `colab stop -s <name>` when done. This procedure is documentation for the executor — it is not exercised by the test suite (which is CPU-only, no network).
 
 ---
 
@@ -1675,6 +1683,10 @@ Write this exact JSON (thin wrapper — no `def`, `class`, `import torch`, `for`
     "config pulls it from the Hub automatically on a fresh VM. It trains on issue 04's\n",
     "preference pairs and records held-out pair accuracy in the artifact's manifest.json.\n",
     "\n",
+    "For a CLI-driven run on a fresh VM, prefer the one-command bootstrap\n",
+    "`python scripts/reward_colab.py` (it also downloads the tokenizer + preference pairs,\n",
+    "which this notebook cell does not); see `docs/colab-notes.md` for the run procedure.\n",
+    "\n",
     "Before running: set `HF_TOKEN` and `WANDB_API_KEY` in Colab **Secrets** (key icon, left sidebar),\n",
     "set the repo URL below, and on a T4 change `precision = \"fp16\"` in the config (Turing has no bf16)."
    ]
@@ -1750,12 +1762,328 @@ def test_reward_notebook_has_no_secrets_or_outputs():
 Run: `.venv/bin/python -m pytest tests/test_notebook.py -q`
 Expected: PASS (existing pretrain/sft notebook tests + 2 new reward tests).
 
-- [ ] **Step 4: Run the full suite to confirm the whole chain is green**
+- [ ] **Step 4: Commit**
+
+```bash
+git add notebooks/reward_colab.ipynb tests/test_notebook.py
+git commit -m "docs: thin reward Colab notebook and its thinness tests"
+```
+
+---
+
+### Task 8: Colab bootstrap script + shared Hub-download helper + PROGRESS
+
+The one-command real-run mechanism (`docs/colab-notes.md`): extract the generic Hub-download helpers into the package (so the reward — and later GRPO — bootstrap doesn't copy them a third time), refactor `sft_colab.py` to use them, add `scripts/reward_colab.py` (download tokenizer + preference pairs, then `ts2-reward --resume`), test its orchestration with an injected download, run the full suite, and mark issue 05 code-complete.
+
+**Files:**
+- Create: `src/tinystories_v2/hub_download.py`, `scripts/reward_colab.py`, `tests/test_reward_colab.py`
+- Modify: `scripts/sft_colab.py` (use the shared helper), `PROGRESS.md`
+
+**Interfaces:**
+- Consumes: `reward.run` (resume path), `config.load_config`/`load_env`, `hub_download.download_file`/`retry`; the `SlotCoverageFakeJudge` + `judge_with_order_swap` pair-builder (test-side, mirroring Task 4).
+- Produces: `hub_download.retry(fn, *, attempts, base_delay, what)`, `hub_download.download_file(repo_id, filename, local_dir) -> Path`; `reward_colab.prepare(reward_config, *, download=None) -> Path`, `reward_colab.main(argv=None)`, and module constants `TOKENIZER_REPO`, `PAIRS_REPO`, `PAIRS_FILENAME`, `DEFAULT_REWARD_CONFIG`.
+
+- [ ] **Step 1: Create the shared `src/tinystories_v2/hub_download.py`**
+
+```python
+"""Retry-wrapped single-file Hub downloads for the Colab bootstrap scripts.
+
+Shared by scripts/*_colab.py so each one-command bootstrap survives Colab's
+intermittent network faults (ConnectionResetError) without duplicating the
+logic. The hf_hub_download import stays local to download_file so tests can
+monkeypatch huggingface_hub.hf_hub_download.
+"""
+
+import time
+from pathlib import Path
+
+
+def retry(fn, *, attempts: int = 5, base_delay: float = 2.0, what: str = "operation"):
+    """Call fn(), retrying on any exception with exponential backoff."""
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as err:  # noqa: BLE001 — transient network faults are the norm here
+            if attempt == attempts - 1:
+                raise
+            delay = base_delay * 2**attempt
+            print(f"[hub_download] {what} failed ({err!r}); "
+                  f"retry {attempt + 1}/{attempts - 1} in {delay:.0f}s")
+            time.sleep(delay)
+
+
+def download_file(repo_id: str, filename: str, local_dir) -> Path:
+    """Download one file from the Hub into local_dir (so it lands at
+    local_dir/filename), retry-wrapped and tolerant of the repo being a model or
+    a dataset repo. Returns the local path."""
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import RepositoryNotFoundError
+
+    local_dir = Path(local_dir)
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    def _fetch() -> str:
+        last: Exception | None = None
+        for repo_type in ("model", "dataset"):
+            try:
+                return hf_hub_download(repo_id=repo_id, filename=filename,
+                                       repo_type=repo_type, local_dir=str(local_dir))
+            except RepositoryNotFoundError as err:  # try the other repo type
+                last = err
+        raise last  # both repo types missing — surface the last error
+
+    retry(_fetch, what=f"download {repo_id}/{filename}")
+    return local_dir / filename
+```
+
+- [ ] **Step 2: Refactor `scripts/sft_colab.py` to import the shared helpers**
+
+Delete the local `retry` and `download_file` function definitions from `scripts/sft_colab.py`, and add this import next to its existing imports (after `from tinystories_v2.config import load_config, load_env`):
+
+```python
+from tinystories_v2.hub_download import download_file, retry  # noqa: F401 — re-exported for tests
+```
+
+Everything else in `sft_colab.py` is unchanged (`prepare` still references the module-global `download_file`; `main` still calls it). `retry` is re-exported so nothing that imported it breaks.
+
+- [ ] **Step 3: Run the existing SFT bootstrap test to confirm no regression**
+
+Run: `.venv/bin/python -m pytest tests/test_sft_colab.py -q`
+Expected: PASS (5 tests) — the monkeypatch of `boot.download_file` and of `huggingface_hub.hf_hub_download` still work because `download_file`'s hf import stays local.
+
+- [ ] **Step 4: Write the failing reward-bootstrap test**
+
+Create `tests/test_reward_colab.py`:
+
+```python
+"""The reward Colab bootstrap orchestrates download -> ts2-reward --resume as one
+idempotent command. These tests drive that orchestration against fixture
+artifacts with an injected/monkeypatched download (no network), verifying the
+wiring and the skip-on-warm-VM behavior the real run depends on.
+"""
+
+import importlib.util
+import json
+import shutil
+import sys
+from pathlib import Path
+
+import pytest
+
+from tinystories_v2.judge import SlotCoverageFakeJudge, judge_with_order_swap
+from tinystories_v2.slot_prompt import SLOT_FIELDS
+from tinystories_v2.slots import Scaffold
+from tinystories_v2.tokenizer import run as tokenizer_run
+from tinystories_v2.data import run as data_run
+
+# scripts/ is not an importable package; load the bootstrap module by path.
+_spec = importlib.util.spec_from_file_location(
+    "reward_colab", Path(__file__).parent.parent / "scripts" / "reward_colab.py")
+boot = importlib.util.module_from_spec(_spec)
+sys.modules["reward_colab"] = boot
+_spec.loader.exec_module(boot)
+
+_BLAND = ["A plain note with nothing much to say.",
+          "Some words that go nowhere in particular."]
+
+
+@pytest.fixture
+def hub_and_config(tmp_path, fixture_path):
+    """Build a real tokenizer + a separable fake-Judge pairs.jsonl (the 'Hub'
+    source the bootstrap downloads from) and a reward config pointing at local
+    artifact paths that do not exist yet, so prepare() must download."""
+    hub = tmp_path / "hub"
+    tokenizer_run({"out_dir": str(hub / "tokenizer"), "corpus": [str(fixture_path)],
+                   "text_field": "fable", "vocab_size": 512})
+    data_run({
+        "out_dir": str(hub / "data"), "max_extraction_failures": 0,
+        "source": {"kind": "jsonl", "path": str(fixture_path)},
+        "splits": {"seed": "fixture-v1", "pretrain": 0.1, "sft": 0.7,
+                   "pref": 0.1, "eval": 0.1},
+    })
+    with open(hub / "data" / "splits" / "sft.jsonl", encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    judge = SlotCoverageFakeJudge()
+    pairs_src = hub / "pairs.jsonl"
+    with pairs_src.open("w", encoding="utf-8") as f:
+        for i, row in enumerate(rows):
+            scaffold = Scaffold(**{fld: row[fld] for fld in SLOT_FIELDS})
+            chosen = (f"{scaffold.character}, a {scaffold.trait} one in "
+                      f"{scaffold.setting}, met {scaffold.conflict}. "
+                      f"{scaffold.resolution}. The moral: {scaffold.moral}.")
+            pair = judge_with_order_swap(judge, scaffold, chosen, _BLAND[i % len(_BLAND)])
+            f.write(json.dumps(pair.to_dict(), ensure_ascii=False) + "\n")
+
+    art = tmp_path / "artifacts"
+    tokenizer_dst = art / "tokenizer_full" / "tokenizer.json"
+    pairs_dst = art / "pref_full" / "pairs.jsonl"
+    reward_cfg = tmp_path / "reward.toml"
+    reward_cfg.write_text(
+        f'out_dir = "{art / "reward_full"}"\n\n'
+        f'[data]\npairs_path = "{pairs_dst}"\n'
+        f'tokenizer_path = "{tokenizer_dst}"\n', encoding="utf-8")
+
+    sources = {
+        (boot.TOKENIZER_REPO, "tokenizer.json"): hub / "tokenizer" / "tokenizer.json",
+        (boot.PAIRS_REPO, boot.PAIRS_FILENAME): pairs_src,
+    }
+    return {"reward_cfg": reward_cfg, "tokenizer_dst": tokenizer_dst,
+            "pairs_dst": pairs_dst, "sources": sources}
+
+
+def _fake_download(sources, calls=None):
+    def download(repo_id, filename, local_dir):
+        if calls is not None:
+            calls.append((repo_id, filename))
+        dst = Path(local_dir) / filename
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(sources[(repo_id, filename)], dst)
+        return dst
+    return download
+
+
+def test_prepare_downloads_tokenizer_and_pairs(hub_and_config):
+    calls = []
+    pairs = boot.prepare(hub_and_config["reward_cfg"],
+                         download=_fake_download(hub_and_config["sources"], calls))
+    assert {filename for _, filename in calls} == {"tokenizer.json", boot.PAIRS_FILENAME}
+    assert pairs == hub_and_config["pairs_dst"]
+    assert hub_and_config["tokenizer_dst"].exists() and pairs.exists()
+
+
+def test_prepare_is_idempotent_on_a_warm_vm(hub_and_config):
+    boot.prepare(hub_and_config["reward_cfg"],
+                 download=_fake_download(hub_and_config["sources"]))
+
+    def boom(*args, **kwargs):
+        raise AssertionError("download must not run when artifacts already exist")
+
+    boot.prepare(hub_and_config["reward_cfg"], download=boom)  # no download call
+
+
+def test_main_skip_train_prepares_without_training(hub_and_config, monkeypatch):
+    monkeypatch.setattr(boot, "download_file", _fake_download(hub_and_config["sources"]))
+    trained = []
+    monkeypatch.setattr(boot.reward, "run", lambda *a, **k: trained.append(True))
+    boot.main(["--reward-config", str(hub_and_config["reward_cfg"]), "--skip-train"])
+    assert hub_and_config["pairs_dst"].exists()
+    assert trained == []
+
+
+def test_main_trains_with_resume_after_prepare(hub_and_config, monkeypatch):
+    monkeypatch.setattr(boot, "download_file", _fake_download(hub_and_config["sources"]))
+    resume_flags = []
+
+    def fake_run(config, resume=False):
+        resume_flags.append(resume)
+        return {"step": 1, "loss": 0.5, "heldout_accuracy": 0.9}
+
+    monkeypatch.setattr(boot.reward, "run", fake_run)
+    boot.main(["--reward-config", str(hub_and_config["reward_cfg"])])
+    assert hub_and_config["pairs_dst"].exists()
+    assert resume_flags == [True]  # ts2-reward invoked with resume=True
+```
+
+- [ ] **Step 5: Run the reward-bootstrap test to verify it fails**
+
+Run: `.venv/bin/python -m pytest tests/test_reward_colab.py -q`
+Expected: FAIL — `FileNotFoundError`/`spec_from_file_location` cannot load `scripts/reward_colab.py` (does not exist yet).
+
+- [ ] **Step 6: Create `scripts/reward_colab.py`**
+
+```python
+"""One-command real Reward Model run for Colab (issue 05).
+
+Turns a fresh L4 VM into a running Reward Model job with a single command.
+Idempotent: safe to re-run after an L4 preemption — it skips already-present
+artifacts and `ts2-reward --resume` continues from the last Hub checkpoint.
+
+Steps:
+  1. load .env secrets (HF_TOKEN, WANDB_API_KEY) so Hub download/sync + W&B work
+  2. download tokenizer.json + the preference pairs (issue 04's artifact) from
+     the Hub (retry-wrapped) if the local copies are absent
+  3. run the Reward Model stage (ts2-reward, resume=True): fetches the SFT
+     checkpoint via [init].hub_source, resumes any prior Reward Model checkpoint
+     from the Hub, trains with Bradley-Terry loss, and checkpoints back to the
+     Hub every checkpoint_every steps
+
+Run on the VM (in-kernel, survives disconnects — never nohup-detach):
+    python scripts/reward_colab.py            # download + train
+    python scripts/reward_colab.py --skip-train   # download only
+    colab exec -f scripts/reward_colab.py
+
+See docs/colab-notes.md for the CLI gotchas (push main first, .env via upload,
+background + poll long commands, retries, always stop the VM). The preference
+pairs live in issue 04's Hub repo; override with --pairs-repo / --pairs-file if
+it moves.
+"""
+
+import argparse
+from pathlib import Path
+
+from tinystories_v2 import reward
+from tinystories_v2.config import load_config, load_env
+from tinystories_v2.hub_download import download_file  # noqa: F401 — monkeypatched in tests
+
+TOKENIZER_REPO = "congthanh991/tinystories-v2-tokenizer"
+PAIRS_REPO = "congthanh991/tinystories-v2-pref"   # issue 04's preference artifact
+PAIRS_FILENAME = "pairs.jsonl"
+DEFAULT_REWARD_CONFIG = "configs/reward_full.toml"
+
+
+def prepare(reward_config, *, download=None) -> Path:
+    """Ensure the tokenizer + preference pairs are present (download if missing).
+    Returns the local pairs path. `download` is injectable for tests; it defaults
+    to download_file resolved at call time. Idempotent: each step is guarded by
+    an existence check, so re-running on a warm VM is a no-op up to training."""
+    if download is None:
+        download = download_file
+    cfg = load_config(reward_config)
+    tokenizer_path = Path(cfg["data"]["tokenizer_path"])   # artifacts/tokenizer_full/tokenizer.json
+    pairs_path = Path(cfg["data"]["pairs_path"])           # artifacts/pref_full/pairs.jsonl
+
+    if not tokenizer_path.exists():
+        print(f"[reward_colab] downloading tokenizer -> {tokenizer_path}")
+        download(TOKENIZER_REPO, "tokenizer.json", tokenizer_path.parent)
+    if not pairs_path.exists():
+        print(f"[reward_colab] downloading preference pairs -> {pairs_path}")
+        download(PAIRS_REPO, PAIRS_FILENAME, pairs_path.parent)
+    return pairs_path
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--reward-config", default=DEFAULT_REWARD_CONFIG, type=Path)
+    parser.add_argument("--skip-train", action="store_true",
+                        help="download the tokenizer + pairs only, then stop")
+    args = parser.parse_args(argv)
+
+    load_env()  # HF_TOKEN / WANDB_API_KEY reach Hub sync + wandb; never printed
+    prepare(args.reward_config)
+    if args.skip_train:
+        print("[reward_colab] --skip-train: inputs ready; skipping training")
+        return
+    print("[reward_colab] starting Reward Model training (ts2-reward --resume)")
+    summary = reward.run(load_config(args.reward_config), resume=True)
+    print(f"[reward_colab] done: step {summary['step']}, loss {summary['loss']:.4f}, "
+          f"held-out accuracy {summary['heldout_accuracy']:.3f}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 7: Run the reward-bootstrap test to verify it passes**
+
+Run: `.venv/bin/python -m pytest tests/test_reward_colab.py -q`
+Expected: PASS (4 tests).
+
+- [ ] **Step 8: Run the full suite to confirm the whole chain is green**
 
 Run: `.venv/bin/python -m pytest -q`
-Expected: PASS — all prior tests plus the new `test_model_hidden_states`, `test_reward_model`, `test_reward_batch`, `test_reward_stage`, `test_reward_resume`, `test_reward_gate`, and the two notebook tests.
+Expected: PASS — all prior tests plus the new `test_model_hidden_states`, `test_reward_model`, `test_reward_batch`, `test_reward_stage`, `test_reward_resume`, `test_reward_gate`, `test_reward_colab`, the refactored `test_sft_colab`, and the two notebook tests.
 
-- [ ] **Step 5: Update `PROGRESS.md`**
+- [ ] **Step 9: Update `PROGRESS.md`**
 
 In the **Now** section, add a bullet (after the issue 03 bullet):
 
@@ -1763,8 +2091,9 @@ In the **Now** section, add a bullet (after the issue 03 bullet):
 - ✅ **Issue 05 (Reward Model stage + accuracy gate) code complete** — `ts2-reward`
   stage (Bradley-Terry loss on the SFT backbone + a scalar head, deterministic
   held-out split, checkpoint-resume), the shared `gate.check_reward_gate`
-  (~68% default), `configs/reward_{fixture,full}.toml`, `reward_colab.ipynb`, and
-  the `reward-model-artifact-v1` schema all landed with tests green. The real run
+  (~68% default), `configs/reward_{fixture,full}.toml`, the one-command
+  `scripts/reward_colab.py` bootstrap + `reward_colab.ipynb`, and the
+  `reward-model-artifact-v1` schema all landed with tests green. The real run
   consumes issue 03's SFT checkpoint and issue 04's labeled pairs. Unblocks
   **issue 06** (GRPO), which enforces the gate at startup.
 ```
@@ -1783,18 +2112,21 @@ In the **Log**, add a dated entry at the top:
   `reward_model.py` (FableLM backbone + scalar head, last-real-token scoring,
   hand-written Bradley-Terry loss), `reward.py` stage (`ts2-reward`, deterministic
   train/holdout split, checkpoint-resume, held-out accuracy + split recipe in the
-  manifest), `gate.py` (`check_reward_gate`, ~68% default), configs, thin
-  `reward_colab.ipynb`, and `docs/schemas/reward-model-artifact-v1.md`. Added a
-  behavior-preserving `FableLM.hidden_states` seam. Tests: scoring/padding-
-  invariance, batching, separable fake-Judge pairs beat chance on held-out,
-  kill-and-resume bitwise, and gate refusal. Unblocks issue 06 (GRPO).
+  manifest), `gate.py` (`check_reward_gate`, ~68% default), configs, the
+  `scripts/reward_colab.py` bootstrap (shared `hub_download` helper, extracted
+  from `sft_colab.py`), thin `reward_colab.ipynb`, and
+  `docs/schemas/reward-model-artifact-v1.md`. Added a behavior-preserving
+  `FableLM.hidden_states` seam. Tests: scoring/padding-invariance, batching,
+  separable fake-Judge pairs beat chance on held-out, kill-and-resume bitwise,
+  gate refusal, and bootstrap orchestration. Unblocks issue 06 (GRPO).
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add notebooks/reward_colab.ipynb tests/test_notebook.py PROGRESS.md
-git commit -m "docs: reward Colab notebook, notebook tests, and progress for issue 05"
+git add src/tinystories_v2/hub_download.py scripts/reward_colab.py scripts/sft_colab.py \
+        tests/test_reward_colab.py PROGRESS.md
+git commit -m "feat: one-command reward Colab bootstrap and shared Hub-download helper"
 ```
 
 ---
@@ -1807,9 +2139,10 @@ git commit -m "docs: reward Colab notebook, notebook tests, and progress for iss
 - Held-out accuracy and pair-split recipe recorded in artifact metadata → Task 4 (`manifest` + `test_manifest_records_accuracy_and_split_recipe`) + schema doc.
 - Gate: below-gate refuses with a clear message via a shared gate check; above-gate passes → Tasks 4 (`gate.py`) + 6 (`test_reward_gate.py`).
 - Training resumes after a kill; metrics stream to W&B when enabled → Task 5 (bitwise resume) + `MetricsLogger` (W&B path reused verbatim from sft/pretrain).
-- Thin Colab notebook for the real run → Task 7.
+- Thin Colab notebook for the real run → Task 7; the real CLI-driven run mechanism (one-command bootstrap per `docs/colab-notes.md`) → Task 8 (`scripts/reward_colab.py`, tested via injected download).
 - Blocked-by (02 ✅, 10 ✅): the backbone + checkpoint infra (02) and the preference-pair schema (10) are both present and reused.
+- Colab run procedure honored: the bootstrap downloads the tokenizer + preference pairs the stage does not fetch itself (avoiding the fresh-VM failure `ts2-reward --resume` alone would hit), `--resume` is idempotent for preemption recovery, and the run procedure (push main, `.env` upload, background+poll, `colab stop`) is captured in the plan's Colab Run Procedure section for the executor.
 
-**2. Placeholder scan:** every code step contains complete, runnable code; no "TBD"/"add error handling"/"similar to Task N". The one repeated construction (separable fake-Judge pairs) is written out fully in each test file that needs it (Tasks 4, 5, 6), since tasks may be read out of order.
+**2. Placeholder scan:** every code step contains complete, runnable ASCII code; no "TBD"/"add error handling"/"similar to Task N", and no intentionally-broken tokens. The one repeated construction (separable fake-Judge pairs) is written out fully in each test file that needs it (Tasks 4, 5, 6, 8), since tasks may be read out of order.
 
 **3. Type consistency:** `RewardModel(config)`, `.backbone`, `.score_head`, `.load_backbone_state_dict`, `forward(idx, lengths) -> [B]` are used identically in Tasks 2, 4, 5. `pad_sequences(sequences, context, device) -> (idx, lengths)` is defined in Task 2 and imported in Task 3. `split_pairs(encoded, holdout_frac, seed) -> (train, holdout)`, `get_pair_batch(...) -> (chosen_idx, chosen_len, rejected_idx, rejected_len)`, and `evaluate_accuracy(model, holdout, *, device)` are defined in Task 3 and called with matching signatures in Task 4. The checkpoint state key `pairs_seen` (not SFT's `tokens_seen`) is written in Task 4's `run` and asserted in Task 5's resume test. `check_reward_gate(reward_dir, gate=DEFAULT_ACCURACY_GATE) -> float` and manifest field `heldout_accuracy` / `pair_split` are consistent across `gate.py` (Task 4), the schema doc (Task 4), and the gate tests (Task 6).
