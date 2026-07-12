@@ -77,6 +77,25 @@ def fetch_from(target: str, local_dir: Path) -> None:
         sync_to(str(local_dir), Path(target), mirror_checkpoints=False)
 
 
+def fetch_file_from(target: str, relative_path: str, dest: Path) -> None:
+    """Fetch one file from a sync target (additive, like fetch_from) — for
+    repos where a full snapshot would pull far more than needed (e.g. the
+    data repo's ~1 GB pretrain split when only splits/pref.jsonl is wanted)."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if target.startswith(_HF_PREFIX):
+        load_env()
+        repo_id = target[len(_HF_PREFIX):]
+        source = Path(huggingface_hub.hf_hub_download(
+            repo_id=repo_id, filename=relative_path, repo_type="model"
+        ))
+    else:
+        source = Path(target) / relative_path
+    tmp = dest.with_name(dest.name + ".tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(dest)
+
+
 def try_sync_to(target: str, local_dir: Path) -> None:
     """Best-effort sync for use inside the training loop."""
     try:

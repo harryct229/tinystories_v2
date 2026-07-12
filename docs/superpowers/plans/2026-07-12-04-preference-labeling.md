@@ -1563,6 +1563,8 @@ Create `notebooks/pref_data_colab.ipynb` with exactly this JSON:
     "The job is a resumable offline batch: pairs accumulate on the Hub across sessions.\n",
     "After a preemption just rerun the last cell — `--resume` continues from progress.json.\n",
     "\n",
+    "Operational gotchas for real runs (secrets, preemption, driving the VM): `docs/colab-notes.md`.\n",
+    "\n",
     "Before running: set `HF_TOKEN` in Colab **Secrets** (key icon, left sidebar) and set the repo URL below."
    ]
   },

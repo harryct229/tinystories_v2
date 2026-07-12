@@ -3,7 +3,7 @@ from pathlib import Path
 import huggingface_hub
 import pytest
 
-from tinystories_v2.hub import fetch_from, sync_to
+from tinystories_v2.hub import fetch_from, sync_to, fetch_file_from
 
 
 def make_tree(root: Path) -> None:
@@ -98,3 +98,29 @@ def test_fetch_from_never_deletes_destination_checkpoints(tmp_path):
     fetch_from(str(src), dst)
     assert (dst / "checkpoints" / "step_000002.pt").exists()  # untouched
     assert (dst / "notes" / "readme.txt").exists()  # fetched
+
+
+def test_fetch_file_from_local_target(tmp_path):
+    src = tmp_path / "artifact"
+    (src / "splits").mkdir(parents=True)
+    (src / "splits" / "pref.jsonl").write_text('{"x": 1}\n', encoding="utf-8")
+    dest = tmp_path / "elsewhere" / "pref.jsonl"
+    fetch_file_from(str(src), "splits/pref.jsonl", dest)
+    assert dest.read_text(encoding="utf-8") == '{"x": 1}\n'
+
+
+def test_fetch_file_from_hf_dispatches_to_hf_hub_download(tmp_path, monkeypatch):
+    calls = {}
+
+    def fake_download(*, repo_id, filename, repo_type):
+        calls.update(repo_id=repo_id, filename=filename, repo_type=repo_type)
+        src = tmp_path / "downloaded.jsonl"
+        src.write_text('{"y": 2}\n', encoding="utf-8")
+        return str(src)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    dest = tmp_path / "dest" / "pref.jsonl"
+    fetch_file_from("hf://someone/some-repo", "splits/pref.jsonl", dest)
+    assert calls == {"repo_id": "someone/some-repo",
+                     "filename": "splits/pref.jsonl", "repo_type": "model"}
+    assert dest.read_text(encoding="utf-8") == '{"y": 2}\n'

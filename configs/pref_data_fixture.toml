@@ -1,0 +1,29 @@
+# Toy CPU labeling smoke against fixture artifacts — local sanity runs and docs.
+# Assumes these upstream stages have run:
+#   ts2-data-prep --config configs/data_prep_fixture.toml
+#   ts2-tokenizer --config configs/tokenizer_fixture.toml
+#   ts2-pretrain  --config configs/pretrain_fixture.toml   (the sampling checkpoint)
+# Uses the deterministic fake Judge: no GPU, network, or model download.
+# Caveat: the fixture pipeline's context is 64, so Scaffold prompts that exceed
+# it are counted under skipped_long_prompt instead of labeled — this is a
+# wiring smoke, not a quality run. Stage behavior is guarded by
+# tests/test_pref_data*.py, which use a context-256 checkpoint.
+out_dir = "artifacts/pref_data_fixture"
+max_scaffolds = 0
+
+[data]
+pref_split = "artifacts/data_prep_fixture/splits/pref.jsonl"
+
+[checkpoint]
+local_dir = "artifacts/pretrain_fixture"
+
+[sampling]
+num_completions = 4
+pairs_per_scaffold = 3
+temperature = 1.0
+top_p = 0.95
+max_new_tokens = 32
+seed = 1337
+
+[judge]
+kind = "fake_slot_coverage"

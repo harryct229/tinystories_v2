@@ -1,0 +1,227 @@
+"""Unit seams of the preference-labeling stage: pair scheduling, per-Scaffold
+seeding, completion sampling, order-swap pair labeling, and the kill-safe
+progress store."""
+
+from dataclasses import dataclass
+
+import json
+import pytest
+import torch
+from tokenizers import Tokenizer
+
+from tinystories_v2.judge import (
+    JudgeOutputError, PositionBiasedFakeJudge, SlotCoverageFakeJudge,
+)
+from tinystories_v2.model import FableLM, ModelConfig
+from tinystories_v2.pref_data import (
+    Progress,
+    commit_scaffold,
+    label_scaffold,
+    load_progress,
+    pair_indices,
+    sample_completions,
+    scaffold_seed,
+)
+from tinystories_v2.preferences import (
+    PreferencePair, VerdictMetadata, validate_preference_pair,
+)
+from tinystories_v2.slots import Scaffold
+from tinystories_v2.tokenizer import run as tokenizer_run
+
+
+def test_pair_indices_covers_all_completions_before_repeating():
+    # Round-robin: the first two pairs are disjoint, so N=4 completions all
+    # appear before any completion is reused.
+    assert pair_indices(4, 3) == [(0, 3), (1, 2), (0, 2)]
+
+
+def test_pair_indices_full_schedule_is_every_unique_pair():
+    schedule = pair_indices(4, 6)
+    assert len(set(schedule)) == 6
+    assert all(a < b for a, b in schedule)
+
+
+def test_pair_indices_handles_odd_completion_counts():
+    assert pair_indices(3, 3) == [(1, 2), (0, 2), (0, 1)]
+
+
+def test_pair_indices_rejects_bad_counts():
+    with pytest.raises(ValueError):
+        pair_indices(4, 7)   # only C(4,2) = 6 pairs exist
+    with pytest.raises(ValueError):
+        pair_indices(4, 0)
+    with pytest.raises(ValueError):
+        pair_indices(1, 1)
+
+
+def test_scaffold_seed_is_deterministic_and_input_sensitive():
+    assert scaffold_seed(1337, "abc") == scaffold_seed(1337, "abc")
+    assert scaffold_seed(1337, "abc") != scaffold_seed(1337, "abd")
+    assert scaffold_seed(1, "abc") != scaffold_seed(2, "abc")
+    assert 0 <= scaffold_seed(1337, "abc") < 2**63
+
+
+TOY_MODEL = {"vocab_size": 512, "d_model": 64, "n_layers": 2,
+             "n_heads": 2, "context": 256, "ffn_hidden": 192}
+
+
+@pytest.fixture(scope="module")
+def toy_tokenizer(tmp_path_factory, fixture_path) -> Tokenizer:
+    out = tmp_path_factory.mktemp("tok")
+    tokenizer_run({"out_dir": str(out), "corpus": [str(fixture_path)],
+                   "text_field": "fable", "vocab_size": 512})
+    return Tokenizer.from_file(str(out / "tokenizer.json"))
+
+
+@pytest.fixture(scope="module")
+def toy_model() -> FableLM:
+    torch.manual_seed(0)
+    return FableLM(ModelConfig(**TOY_MODEL))
+
+
+@pytest.fixture(scope="module")
+def toy_scaffold() -> Scaffold:
+    return Scaffold(character="fox", trait="greedy", setting="a dense forest",
+                    conflict="loses food to a trick",
+                    resolution="the trickster is exposed",
+                    moral="honesty is the best policy")
+
+
+def test_sample_completions_is_seed_deterministic(toy_model, toy_tokenizer,
+                                                  toy_scaffold):
+    kwargs = dict(num_completions=4, max_new_tokens=16, temperature=1.0,
+                  top_p=0.95, device="cpu")
+    first = sample_completions(toy_model, toy_tokenizer, toy_scaffold,
+                               seed=7, **kwargs)
+    second = sample_completions(toy_model, toy_tokenizer, toy_scaffold,
+                                seed=7, **kwargs)
+    assert first == second
+    assert len(first) == 4
+    assert all(isinstance(text, str) for text in first)
+
+
+def test_label_scaffold_keeps_consistent_pairs_and_counts_degenerate(
+        toy_scaffold):
+    completions = [
+        "The greedy fox in a dense forest learned honesty is the best policy.",
+        "A bird flew.",
+        "A bird flew.",   # duplicate of index 1 -> the (1, 2) pair is degenerate
+        "Fish swam in a dense forest.",
+    ]
+    pairs, counters = label_scaffold(
+        SlotCoverageFakeJudge(), toy_scaffold, completions, 3)
+    # pair_indices(4, 3) == [(0, 3), (1, 2), (0, 2)]; completion 0 has the
+    # highest slot coverage, so it wins both non-degenerate pairs.
+    assert counters == {"kept": 2, "discarded_inconsistent": 0,
+                        "skipped_degenerate": 1, "judge_error": 0}
+    assert [pair.chosen for pair in pairs] == [completions[0], completions[0]]
+    assert all(pair.verdict.consistent for pair in pairs)
+
+
+def test_label_scaffold_discards_all_position_biased_verdicts(toy_scaffold):
+    pairs, counters = label_scaffold(
+        PositionBiasedFakeJudge(), toy_scaffold,
+        ["Alpha text.", "Beta text.", "Gamma text.", "Delta text."], 3)
+    assert pairs == []
+    assert counters == {"kept": 0, "discarded_inconsistent": 3,
+                        "skipped_degenerate": 0, "judge_error": 0}
+
+
+def test_label_scaffold_skips_empty_completions(toy_scaffold):
+    pairs, counters = label_scaffold(
+        SlotCoverageFakeJudge(), toy_scaffold,
+        ["", "Beta text.", "  ", "Delta text."], 3)
+    # Schedule (0,3), (1,2), (0,2): every pair touches an empty completion.
+    assert pairs == []
+    assert counters == {"kept": 0, "discarded_inconsistent": 0,
+                        "skipped_degenerate": 3, "judge_error": 0}
+
+
+@dataclass(frozen=True)
+class _UnparseableJudge:
+    judge_id: str = "fake:unparseable-v1"
+
+    def compare(self, scaffold, fable_a, fable_b):
+        raise JudgeOutputError("no verdict")
+
+
+def test_label_scaffold_counts_judge_errors_and_continues(toy_scaffold):
+    pairs, counters = label_scaffold(
+        _UnparseableJudge(), toy_scaffold,
+        ["Alpha text.", "Beta text.", "Gamma text.", "Delta text."], 3)
+    assert pairs == []
+    assert counters == {"kept": 0, "discarded_inconsistent": 0,
+                        "skipped_degenerate": 0, "judge_error": 3}
+
+
+def make_pair(tag: str) -> PreferencePair:
+    return PreferencePair(
+        scaffold=Scaffold(character="fox", trait="greedy",
+                          setting="a dense forest",
+                          conflict="loses food to a trick",
+                          resolution="the trickster is exposed",
+                          moral="honesty is the best policy"),
+        chosen=f"The fox learned honesty ({tag}).",
+        rejected=f"A fox went home ({tag}).",
+        verdict=VerdictMetadata(judge_id="fake:slot-coverage-v1",
+                                first_pass="A", swapped_pass="B",
+                                consistent=True),
+    )
+
+
+def test_commit_and_reload_round_trip(tmp_path):
+    progress = load_progress(tmp_path)
+    assert progress == Progress()
+    commit_scaffold(tmp_path, progress, "hash-1", [make_pair("one")],
+                    {"kept": 1})
+    commit_scaffold(tmp_path, progress, "hash-2", [],
+                    {"skipped_degenerate": 3})
+    reloaded = load_progress(tmp_path)
+    assert reloaded == Progress(pairs_written=1, done=["hash-1", "hash-2"],
+                                counters={"kept": 1, "skipped_degenerate": 3})
+    lines = (tmp_path / "pairs.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    validate_preference_pair(json.loads(lines[0]))
+
+
+def test_load_truncates_uncommitted_trailing_lines(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "hash-1", [make_pair("one")],
+                    {"kept": 1})
+    with (tmp_path / "pairs.jsonl").open("a", encoding="utf-8") as f:
+        f.write('{"uncommitted": ')   # crash mid-append, before the commit
+    reloaded = load_progress(tmp_path)
+    assert reloaded.pairs_written == 1
+    lines = (tmp_path / "pairs.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    validate_preference_pair(json.loads(lines[0]))
+
+
+def test_load_rejects_missing_committed_pairs(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "hash-1", [make_pair("one")],
+                    {"kept": 1})
+    (tmp_path / "pairs.jsonl").unlink()
+    with pytest.raises(ValueError, match="corrupt"):
+        load_progress(tmp_path)
+
+
+def test_load_survives_unicode_line_separator_in_pair_text(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "hash-1",
+                    [make_pair("one two")], {"kept": 1})
+    reloaded = load_progress(tmp_path)
+    assert reloaded.pairs_written == 1
+    raw = (tmp_path / "pairs.jsonl").read_text(encoding="utf-8")
+    records = [line for line in raw.split("\n") if line]
+    assert len(records) == 1
+    assert validate_preference_pair(json.loads(records[0]))
+
+
+def test_load_rejects_fewer_lines_than_committed(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "h1", [make_pair("one")], {"kept": 1})
+    commit_scaffold(tmp_path, progress, "h2", [make_pair("two")], {"kept": 1})
+    (tmp_path / "pairs.jsonl").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt"):
+        load_progress(tmp_path)

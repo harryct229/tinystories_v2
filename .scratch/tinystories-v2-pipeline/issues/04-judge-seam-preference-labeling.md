@@ -1,6 +1,6 @@
 # 04 — Preference labeling stage
 
-Status: ready-for-agent
+Status: code-complete — real labeling run ready (issue 03's SFT checkpoint is on the Hub)
 
 ## Parent
 
@@ -20,12 +20,12 @@ into one growing, schema-valid preference-pair artifact synced to the Hub.
 
 ## Acceptance criteria
 
-- [ ] Whole stage runs on CPU with the fake Judge on fixture data, producing an artifact that passes issue 10's schema validation
-- [ ] Stage applies order-swap consistency filtering; the discarded-pair rate is recorded in artifact metadata
-- [ ] Labeling job kill-and-resume test: no duplicate and no lost pairs after interruption
-- [ ] Judge implementation (real or fake) is config-selected through issue 10's interface
-- [ ] Sampling parameters (N per Scaffold, temperature, top-p) come from config with design-doc defaults
-- [ ] Thin Colab notebook exists for the real labeling run
+- [x] Whole stage runs on CPU with the fake Judge on fixture data, producing an artifact that passes issue 10's schema validation
+- [x] Stage applies order-swap consistency filtering; the discarded-pair rate is recorded in artifact metadata
+- [x] Labeling job kill-and-resume test: no duplicate and no lost pairs after interruption
+- [x] Judge implementation (real or fake) is config-selected through issue 10's interface
+- [x] Sampling parameters (N per Scaffold, temperature, top-p) come from config with design-doc defaults
+- [x] Thin Colab notebook exists for the real labeling run
 
 ## Blocked by
 
