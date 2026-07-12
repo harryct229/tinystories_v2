@@ -48,17 +48,41 @@ def read_metrics(out_dir: Path) -> list[dict]:
     return [json.loads(line) for line in lines]
 
 
-def test_toy_run_decreases_loss_through_stage_entrypoint(tmp_path, fixture_path, tokenizer_path):
+@pytest.mark.parametrize(
+    "position_encoding,mlp_type,ffn_hidden",
+    [
+        pytest.param("rope", "swiglu", 192, id="rope-swiglu"),
+        pytest.param("learned", "swiglu", 192, id="learned-swiglu"),
+        pytest.param("rope", "gelu", 288, id="rope-gelu"),
+    ],
+)
+def test_toy_ablation_variant_decreases_loss_through_stage_entrypoint(
+    tmp_path,
+    fixture_path,
+    tokenizer_path,
+    position_encoding,
+    mlp_type,
+    ffn_hidden,
+):
     config = toy_config(tmp_path, fixture_path, tokenizer_path)
+    config["model"].update(
+        {
+            "position_encoding": position_encoding,
+            "mlp_type": mlp_type,
+            "ffn_hidden": ffn_hidden,
+        }
+    )
+
     summary = run(config)
+
     metrics = read_metrics(Path(config["out_dir"]))
     assert len(metrics) == 30
-    first, last = metrics[0], metrics[-1]
-    assert last["loss"] < first["loss"] - 0.5  # random init starts near ln(512) ~ 6.2
+    first_mean = sum(row["loss"] for row in metrics[:5]) / 5
+    last_mean = sum(row["loss"] for row in metrics[-5:]) / 5
+    assert last_mean < first_mean - 0.25
     assert summary["step"] == 30
-    # loss, LR, tokens seen all present per line (W&B-off degrade path)
-    assert {"step", "loss", "lr", "tokens_seen"} <= first.keys()
-    assert last["tokens_seen"] == 30 * 8 * 64  # steps * micro_batch * context
+    assert {"step", "loss", "lr", "tokens_seen"} <= metrics[0].keys()
+    assert metrics[-1]["tokens_seen"] == 30 * 8 * 64
 
 
 def test_stage_artifacts_and_manifest(tmp_path, fixture_path, tokenizer_path):

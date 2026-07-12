@@ -122,6 +122,37 @@ report the GRPO attempt honestly.
 - Qualitative: fixed sample table of the same Scaffolds across all three
   stages.
 
+## 5M architecture ablation (issue 09)
+
+The report's layer justification uses one controlled three-run ablation:
+
+| Variant | Position | MLP | FFN hidden | Exact params |
+|---|---|---|---:|---:|
+| `rope_swiglu` | RoPE | SwiGLU | 704 | 5,310,720 |
+| `learned_swiglu` | learned absolute | SwiGLU | 704 | 5,441,792 |
+| `rope_gelu` | RoPE | GELU | 1056 | 5,310,720 |
+
+The GELU width is `704 * 3/2 = 1056`, so its two matrices have exactly the
+same parameters as SwiGLU's three. Learned positions retain every baseline
+dimension and add the measured `512 * 256 = 131,072` table (+2.468%). Fairness
+tolerance is 3% relative to `rope_swiglu`.
+
+All runs read the same packed Pretraining binary, use seed 1337 and identical
+optimizer/schedule settings, and process exactly 498,073,600 tokens. Their
+separate W&B runs provide matched-token loss curves. The config set is the
+thin Colab launch surface; no training logic belongs in a notebook:
+
+```bash
+ts2-pretrain --config configs/ablation_5m_rope_swiglu.toml --resume
+ts2-pretrain --config configs/ablation_5m_learned_swiglu.toml --resume
+ts2-pretrain --config configs/ablation_5m_rope_gelu.toml --resume
+ts2-ablation-report --config configs/ablation_5m_report.toml
+```
+
+The report command refuses unequal `tokens_seen` values or a parameter drift
+above 3%, then writes held-out loss/perplexity and fixed-Scaffold generations
+under `docs/experiments/5m-architecture-ablation/` for versioned report evidence.
+
 ## Infrastructure & workflow
 
 - **Repo:** installable package `src/tinystories_v2/` (model.py, data.py,

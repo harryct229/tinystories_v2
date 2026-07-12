@@ -1,0 +1,44 @@
+# Issue 09 position ablation: learned absolute positions replace RoPE.
+# The learned context*d_model table adds 131,072 params (+2.468%, under the
+# documented 3% tolerance); every other model/training value matches baseline.
+out_dir = "artifacts/ablation_5m/learned_swiglu"
+
+[model]
+vocab_size = 8192
+d_model = 256
+n_layers = 4
+n_heads = 4
+context = 512
+ffn_hidden = 704
+position_encoding = "learned"
+mlp_type = "swiglu"
+
+[data]
+split_path = "artifacts/data_prep_full/splits/pretrain.jsonl"
+tokenizer_path = "artifacts/tokenizer_full/tokenizer.json"
+packed_path = "artifacts/packed_full/pretrain.bin"
+
+[train]
+steps = 3800
+micro_batch_size = 128
+grad_accum = 2
+peak_lr = 6e-4
+warmup_frac = 0.015
+min_lr_frac = 0.1
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "bf16"
+seed = 1337
+checkpoint_every = 400
+log_every = 10
+keep_last = 2
+
+[wandb]
+enabled = true
+project = "tinystories-v2"
+run_name = "ablation-5m-learned-swiglu"
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-ablation-learned-swiglu"

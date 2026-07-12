@@ -1,0 +1,43 @@
+# Issue 09 MLP ablation: GELU replaces SwiGLU. GELU uses two projections, so
+# hidden 1056 (= 704 * 3/2) exactly matches SwiGLU's 540,672 MLP params/layer.
+out_dir = "artifacts/ablation_5m/rope_gelu"
+
+[model]
+vocab_size = 8192
+d_model = 256
+n_layers = 4
+n_heads = 4
+context = 512
+ffn_hidden = 1056
+position_encoding = "rope"
+mlp_type = "gelu"
+
+[data]
+split_path = "artifacts/data_prep_full/splits/pretrain.jsonl"
+tokenizer_path = "artifacts/tokenizer_full/tokenizer.json"
+packed_path = "artifacts/packed_full/pretrain.bin"
+
+[train]
+steps = 3800
+micro_batch_size = 128
+grad_accum = 2
+peak_lr = 6e-4
+warmup_frac = 0.015
+min_lr_frac = 0.1
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "bf16"
+seed = 1337
+checkpoint_every = 400
+log_every = 10
+keep_last = 2
+
+[wandb]
+enabled = true
+project = "tinystories-v2"
+run_name = "ablation-5m-rope-gelu"
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-ablation-rope-gelu"
