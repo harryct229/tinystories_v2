@@ -190,3 +190,57 @@ def render_report(results: dict, sample_sheet: str) -> str:
             f"| {_fmt(m['self_bleu'])} | {_fmt(m['mean_flesch_reading_ease'])} "
             f"| {_fmt(m['perplexity'])} |")
     return "\n".join(lines) + "\n\n" + sample_sheet
+
+
+def load_stage_model(stage_cfg: dict, device: str) -> FableLM:
+    """Load one stage's FableLM checkpoint, fetching the artifact from the Hub
+    first if the local checkpoint is absent (fresh VM). Every stage checkpoint
+    is a plain FableLM (base/SFT/RLAIF share the architecture)."""
+    local_dir = Path(stage_cfg["local_dir"])
+    ckpt_dir = local_dir / "checkpoints"
+    if latest_checkpoint(ckpt_dir) is None and stage_cfg.get("hub_source"):
+        fetch_from(stage_cfg["hub_source"], local_dir)
+    ckpt = latest_checkpoint(ckpt_dir)
+    if ckpt is None:
+        raise ValueError(
+            f"no checkpoint for stage {stage_cfg['name']!r} under {ckpt_dir}; "
+            f"point [[stages]].local_dir (and optionally hub_source) at the "
+            f"stage artifact")
+    state = load_checkpoint(ckpt)
+    model = FableLM(ModelConfig(**state["config"]["model"]))
+    model.load_state_dict(state["model"])
+    return model.to(device).eval()
+
+
+def generate_stage_fables(model, tokenizer, scaffolds: list[Scaffold],
+                          seeds: list[int], sampling: dict, *,
+                          device: str = "cpu") -> list[str]:
+    """One seeded completion per Scaffold, decoded to a fable body (prompt
+    prefix and <|end|> excluded). A Slot Prompt longer than the model context
+    yields "" so the caller can skip it rather than crash the whole eval."""
+    end_id = tokenizer.token_to_id(END_TOKEN)
+    fables = []
+    for scaffold, seed in zip(scaffolds, seeds):
+        prompt_ids = tokenizer.encode(render_prompt(scaffold)).ids
+        if len(prompt_ids) > model.config.context:
+            fables.append("")
+            continue
+        seq = sample(
+            model, prompt_ids, num_samples=1,
+            max_new_tokens=sampling["max_new_tokens"],
+            temperature=sampling["temperature"], top_p=sampling["top_p"],
+            seed=seed, end_id=end_id, device=device)[0]
+        fables.append(tokenizer.decode(seq[len(prompt_ids):]).strip())
+    return fables
+
+
+def generate_all_stages(stage_models: dict[str, FableLM], tokenizer,
+                        scaffolds: list[Scaffold], seeds: list[int],
+                        sampling: dict, *, device: str = "cpu",
+                        generate_fn=None) -> dict[str, list[str]]:
+    """Generate per-stage completions with identical Scaffolds, seeds, and
+    sampling across every checkpoint (the apples-to-apples eval contract).
+    generate_fn is injectable for tests; it defaults to generate_stage_fables."""
+    gen = generate_fn or generate_stage_fables
+    return {name: gen(model, tokenizer, scaffolds, seeds, sampling, device=device)
+            for name, model in stage_models.items()}
