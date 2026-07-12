@@ -17,10 +17,14 @@ _Last updated: 2026-07-12_
 - ✅ **Issue 03 (SFT stage + demo) code complete** — `ts2-sft` stage,
   `ts2-demo` script, and the thin `sft_colab.ipynb` all landed with tests
   green. The real SFT run consumes issue 02's now-published Pretraining
-  checkpoint. Unblocks **issue 04** (preference labeling); issue 07 (eval) is
-  still blocked on issue 11.
+  checkpoint. Unblocks **issue 04** (preference labeling); with issue 11 now
+  complete, **issue 07** (evaluation) is also ready for code work.
+- ✅ **Issue 11 (reference-free metrics) complete** — pooled and paper-aligned
+  per-Fable Distinct-n, seeded Self-BLEU, Flesch Reading Ease, and a lazy-Torch
+  held-out perplexity helper are merged with CPU-only deterministic tests.
+  This unblocks **issue 07** and removes one of issue 06's two blockers.
 - 🟢 Highest-leverage grabs now: **issue 04** (unblocked by 03), and the
-  ready code-work issues **05, 08, 09, 11**.
+  ready code-work issues **05, 07, 08, 09**.
 
 ## Issue board
 
@@ -29,15 +33,15 @@ _Last updated: 2026-07-12_
 | 01 | Walking skeleton (scaffold, fixture, data-prep, tokenizer) | — | ✅ complete |
 | 10 | Judge seam + preference-pair schema | — | ✅ complete |
 | 02 | Model + Pretraining stage | 01 | ✅ complete — real run done, model on Hub |
-| 11 | Reference-free metrics library | — | 🟢 ready |
+| 11 | Reference-free metrics library | — | ✅ complete |
 | 12 | Slot Prompt renderer + SFT dataset builder | — | ✅ complete |
 | 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | 🟢 ready (code work) |
 | 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ code complete (real run ready — 02 checkpoint on Hub) |
 | 04 | Preference labeling stage | 03 ✅code, 10 ✅ | 🟢 ready (code work) |
-| 07 | Evaluation suite | 03 ✅code, 10 ✅, 11 ⏳ | 🔴 blocked |
-| 06 | GRPO stage | 05, 11 ⏳ | 🔴 blocked |
+| 07 | Evaluation suite | 03 ✅code, 10 ✅, 11 ✅ | 🟢 ready (code work) |
+| 06 | GRPO stage | 05 ⏳, 11 ✅ | 🔴 blocked on issue 05 |
 
 Production-run gates (beyond code): 05 and 08 need 03's SFT checkpoint and
 04's real labels; 06 additionally needs 05's Reward Model to clear the
@@ -52,10 +56,17 @@ accuracy gate (~68% held-out pair accuracy).
 | W3 | SFT | issue 12 ✅ + SFT (03) code-complete 2026-07-12; real run uses 02's Hub checkpoint |
 | W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling waits on SFT |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
-| W7–8 | eval suite, 5M ablation, report | — |
+| W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
 
 ## Log
 
+- **2026-07-12** — Issue 11 (reference-free metrics library) complete and
+  merged to main: shared word tokenization, pooled `distinct_n`,
+  paper-comparable `mean_distinct_n`, seeded Self-BLEU, Flesch Reading Ease,
+  and held-out perplexity with lazy Torch imports. Whole-branch review added
+  the per-Fable aggregation contract and float32 loss accumulation for fp16
+  checkpoint safety, then hardened all identified coverage gaps. Unblocks
+  issue 07 and leaves issue 06 blocked only on issue 05.
 - **2026-07-12** — Issue 03 (SFT stage + demo) code complete: `sft.py` stage
   (masked-loss fine-tune from a Pretraining checkpoint, checkpoint-resume,
   `ts2-sft`), `demo.py` (`ts2-demo`), `configs/sft_{fixture,full}.toml`,
