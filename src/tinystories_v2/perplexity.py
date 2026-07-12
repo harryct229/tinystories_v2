@@ -74,7 +74,7 @@ def perplexity(
         for batch in _equal_length_batches(blocks, batch_size):
             inputs = torch.stack([pair[0] for pair in batch]).to(device)
             targets = torch.stack([pair[1] for pair in batch]).to(device)
-            logits = model(inputs)
+            logits = model(inputs).float()
             nll = torch.nn.functional.cross_entropy(
                 logits.reshape(-1, logits.shape[-1]),
                 targets.reshape(-1),

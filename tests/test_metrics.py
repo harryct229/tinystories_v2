@@ -2,6 +2,7 @@ import math
 import random
 
 import pytest
+import tinystories_v2.metrics as metrics
 
 from tinystories_v2.metrics import (
     distinct_n,
@@ -68,6 +69,35 @@ def test_distinct_rejects_n_below_one():
         distinct_n(["a b"], n=0)
 
 
+def test_mean_distinct_1_averages_per_fable_ratios_not_pooled_counts():
+    fables = ["a a a a", "b c"]
+
+    # Per-Fable ratios are 1/4 and 2/2, whose mean is 5/8. Pooling instead
+    # gives 3 unique unigrams / 6 total = 1/2.
+    assert metrics.mean_distinct_n(fables) == pytest.approx(5 / 8)
+    assert distinct_n(fables) == pytest.approx(1 / 2)
+
+
+def test_mean_distinct_rejects_empty_set():
+    with pytest.raises(ValueError, match="at least one"):
+        metrics.mean_distinct_n([])
+
+
+def test_mean_distinct_rejects_fable_without_words():
+    with pytest.raises(ValueError, match="no words"):
+        metrics.mean_distinct_n(["a real fable", "!!!"])
+
+
+def test_mean_distinct_rejects_fable_shorter_than_n():
+    with pytest.raises(ValueError, match=r"index 1.*shorter than n=2"):
+        metrics.mean_distinct_n(["a b c", "x"], n=2)
+
+
+def test_mean_distinct_rejects_n_below_one():
+    with pytest.raises(ValueError, match="at least 1"):
+        metrics.mean_distinct_n(["a b"], n=0)
+
+
 def test_self_bleu_identical_fables_is_maximally_redundant():
     assert self_bleu(
         ["The fox ran home.", "The fox ran home."]
@@ -102,12 +132,24 @@ def test_self_bleu_rejects_fable_without_words():
         self_bleu(["a real fable", "!!!"])
 
 
-def test_self_bleu_sampling_is_seeded_and_deterministic():
-    fables = [f"fable number {i} tells of animal {i}" for i in range(6)]
-    sampled_directly = random.Random(0).sample(fables, 3)
-    result = self_bleu(fables, sample_size=3, seed=0)
-    assert result == self_bleu(sampled_directly)
-    assert result == self_bleu(fables, sample_size=3, seed=0)
+def test_self_bleu_sampling_is_seeded_and_selects_scored_subset():
+    fables = [
+        "fox ran safely home",
+        "fox ran safely home",
+        "dog barked beside river",
+        "dog barked beside river",
+        "stars shimmer over ocean",
+        "queen slept under mountain",
+    ]
+    seed_0_sample = random.Random(0).sample(fables, 2)
+    seed_15_sample = random.Random(15).sample(fables, 2)
+
+    seed_0_result = self_bleu(fables, sample_size=2, seed=0)
+    seed_15_result = self_bleu(fables, sample_size=2, seed=15)
+
+    assert seed_0_result == self_bleu(seed_0_sample) == 0.0
+    assert seed_15_result == self_bleu(seed_15_sample) == pytest.approx(1.0)
+    assert seed_0_result == self_bleu(fables, sample_size=2, seed=0)
 
 
 def test_self_bleu_rejects_sample_size_below_two():
@@ -137,6 +179,16 @@ def test_flesch_text_without_terminal_punctuation_is_one_sentence():
     # hello=2 world=1 -> 3 syllables, 2 words, 1 sentence:
     # 206.835 - 1.015*2 - 84.6*1.5 = 77.905
     assert flesch_reading_ease("hello world") == pytest.approx(77.905)
+
+
+def test_flesch_removes_silent_final_e_vowel_run():
+    # cake has two vowel runs but a silent final e, so it has one syllable.
+    assert flesch_reading_ease("Cake.") == pytest.approx(121.22)
+
+
+def test_flesch_zero_vowel_word_has_one_syllable_minimum():
+    # nth has no [aeiouy] run but is clamped to one syllable.
+    assert flesch_reading_ease("Nth.") == pytest.approx(121.22)
 
 
 def test_flesch_rejects_text_without_words():

@@ -1,3 +1,4 @@
+import builtins
 import math
 import subprocess
 import sys
@@ -11,13 +12,24 @@ from tinystories_v2.perplexity import perplexity
 class UniformLogitsModel(torch.nn.Module):
     """Zero logits everywhere, so perplexity must equal vocab_size."""
 
-    def __init__(self, vocab_size: int) -> None:
+    def __init__(
+        self,
+        vocab_size: int,
+        dtype: torch.dtype = torch.float32,
+    ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
+        self.dtype = dtype
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         batch, seq_len = input_ids.shape
-        return torch.zeros(batch, seq_len, self.vocab_size)
+        return torch.zeros(
+            batch,
+            seq_len,
+            self.vocab_size,
+            dtype=self.dtype,
+            device=input_ids.device,
+        )
 
 
 class ToyByteModel(torch.nn.Module):
@@ -44,6 +56,17 @@ def test_uniform_model_perplexity_is_vocab_size():
     token_ids = list(range(11)) * 3
     result = perplexity(UniformLogitsModel(11), token_ids, block_size=7)
     assert result == pytest.approx(11.0)
+
+
+def test_half_precision_logits_do_not_overflow_summed_loss():
+    vocab_size = 4
+    token_ids = [0] * 50_001
+    model = UniformLogitsModel(vocab_size, dtype=torch.float16)
+
+    result = perplexity(model, token_ids, block_size=50_000, batch_size=1)
+
+    assert math.isfinite(result)
+    assert result == pytest.approx(vocab_size)
 
 
 def test_matches_hand_rolled_nll_on_fixture(fixture_byte_ids):
@@ -86,6 +109,11 @@ def test_rejects_fewer_than_two_tokens():
         perplexity(UniformLogitsModel(11), [5], block_size=4)
 
 
+def test_rejects_non_1d_token_ids():
+    with pytest.raises(ValueError, match="flat 1-D"):
+        perplexity(UniformLogitsModel(11), [[1, 2], [3, 4]], block_size=2)
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [{"block_size": 0}, {"block_size": 4, "batch_size": 0}],
@@ -103,3 +131,17 @@ def test_import_never_eagerly_pulls_torch():
         "assert 'torch' not in sys.modules, 'torch imported eagerly'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_missing_torch_raises_install_guidance(monkeypatch):
+    original_import = builtins.__import__
+
+    def import_without_torch(name, *args, **kwargs):
+        if name == "torch":
+            raise ImportError("PyTorch deliberately unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_torch)
+
+    with pytest.raises(RuntimeError, match=r"requires PyTorch.*install"):
+        perplexity(None, [1, 2], block_size=1)

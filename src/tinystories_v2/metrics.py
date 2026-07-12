@@ -1,9 +1,10 @@
 """Reference-free text metrics over plain lists of Fable strings.
 
-Implements the dataset paper's reference-free table (Self-BLEU, Distinct-n,
-Flesch Reading Ease) as a pure standard-library module: no model, GPU, or
-network dependencies, and deterministic for identical inputs. Consumed by
-the eval suite (issue 07) and GRPO diversity monitoring (issue 06).
+Implements the dataset paper's reference-free table (Self-BLEU, per-Fable
+mean Distinct-n, Flesch Reading Ease) as a pure standard-library module: no
+model, GPU, or network dependencies, and deterministic for identical inputs.
+Also retains pooled Distinct-n for compatibility. Consumed by the eval suite
+(issue 07) and GRPO diversity monitoring (issue 06).
 
 Word convention shared by every metric: casefolded runs of letters/digits
 with internal apostrophes kept ("Don't" -> "don't").
@@ -53,6 +54,31 @@ def distinct_n(fables: Sequence[str], n: int = 1) -> float:
     if not pooled:
         raise ValueError(f"no {n}-grams: every fable is shorter than n={n}")
     return len(set(pooled)) / len(pooled)
+
+
+def mean_distinct_n(fables: Sequence[str], n: int = 1) -> float:
+    """Mean of each Fable's own unique / total n-gram ratio.
+
+    This per-Fable arithmetic mean is the aggregation reported by the paper;
+    use ``distinct_n`` for the retained pooled aggregation. ``n`` must be at
+    least 1, and the input must contain at least one Fable. Every Fable must
+    contain words and at least ``n`` tokens: a shorter Fable has zero total
+    n-grams, so its individual ratio (and therefore the mean) is undefined.
+    """
+    if n < 1:
+        raise ValueError("n must be at least 1")
+    if not fables:
+        raise ValueError("mean_distinct_n needs at least one fable")
+    ratios = []
+    for index, tokens in enumerate(_tokenize_fables(fables)):
+        grams = _ngrams(tokens, n)
+        if not grams:
+            raise ValueError(
+                "mean_distinct_n is undefined: "
+                f"fable at index {index} is shorter than n={n}"
+            )
+        ratios.append(len(set(grams)) / len(grams))
+    return sum(ratios) / len(ratios)
 
 
 def _modified_precision(
