@@ -1,6 +1,6 @@
 # 02 — Model + Pretraining stage with checkpoint-resume contract
 
-Status: in-progress — code complete (all criteria met); real Pretraining run underway on a VM since 2026-07-12
+Status: complete — real run done 2026-07-12 (Colab L4 bf16, 3800 steps / 498M tokens, final loss 1.279); checkpoints, tokenizer, packed data, and splits on private HF Hub
 
 ## Parent
 

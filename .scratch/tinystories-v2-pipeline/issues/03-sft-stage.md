@@ -1,6 +1,6 @@
 # 03 — SFT stage: Slot Prompt format and masked-loss fine-tuning
 
-Status: code-complete (real run gated on issue 02's Pretraining checkpoint)
+Status: code-complete — real run unblocked (issue 02's Pretraining checkpoint is on the Hub)
 
 ## Parent
 
