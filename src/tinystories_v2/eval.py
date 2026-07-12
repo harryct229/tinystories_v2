@@ -103,3 +103,36 @@ def all_pairwise_win_rates(judge, scaffolds: list[Scaffold],
     return [win_rate_table(judge, scaffolds, a, stage_fables[a],
                            b, stage_fables[b])
             for a, b in itertools.combinations(names, 2)]
+
+
+def reference_free_metrics(fables: list[str], *,
+                           self_bleu_sample_size: int | None = None,
+                           self_bleu_seed: int = 0) -> dict:
+    """Aggregate issue 11's reference-free metrics over one stage's fables.
+
+    Wordless generations (an empty body from an early/toy checkpoint) carry no
+    lexical signal and are dropped first. A metric undefined for the usable set
+    is None: distinct_2 when no fable has a bigram, self_bleu with fewer than
+    two usable fables, and every metric when nothing is usable. Distinct-1 is
+    the paper's per-Fable mean (mean_distinct_n); distinct_2 is pooled
+    (distinct_n) so short fables don't make it undefined."""
+    usable = [f for f in fables if tokenize_words(f)]
+    metrics = {
+        "n_usable": len(usable),
+        "mean_distinct_1": None,
+        "distinct_2": None,
+        "self_bleu": None,
+        "mean_flesch_reading_ease": None,
+    }
+    if not usable:
+        return metrics
+    metrics["mean_distinct_1"] = mean_distinct_n(usable, 1)
+    metrics["mean_flesch_reading_ease"] = mean_flesch_reading_ease(usable)
+    if len(usable) >= 2:
+        try:
+            metrics["distinct_2"] = distinct_n(usable, 2)
+        except ValueError:
+            metrics["distinct_2"] = None  # no fable has two tokens
+        metrics["self_bleu"] = self_bleu(
+            usable, sample_size=self_bleu_sample_size, seed=self_bleu_seed)
+    return metrics
