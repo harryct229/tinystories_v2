@@ -244,3 +244,99 @@ def generate_all_stages(stage_models: dict[str, FableLM], tokenizer,
     gen = generate_fn or generate_stage_fables
     return {name: gen(model, tokenizer, scaffolds, seeds, sampling, device=device)
             for name, model in stage_models.items()}
+
+
+def _read_split(path: Path) -> list[dict]:
+    with Path(path).open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _encode_eval_tokens(tokenizer, rows: list[dict]) -> list[int]:
+    """Flatten the eval fables into one held-out token stream for perplexity."""
+    ids: list[int] = []
+    for row in rows:
+        ids.extend(tokenizer.encode(row["fable"]).ids)
+    return ids
+
+
+def run(config: dict, *, generate_fn=None) -> dict:
+    load_env()  # HF token for hub fetch/sync — never printed
+    out_dir = Path(config["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    data = config["data"]
+    split_path = Path(data["eval_split"])
+    if not split_path.exists() and data.get("hub_source"):
+        fetch_file_from(data["hub_source"], "splits/eval.jsonl", split_path)
+    rows = _read_split(split_path)
+    max_scaffolds = config.get("max_eval_scaffolds", 0)
+    if max_scaffolds:
+        rows = rows[:max_scaffolds]
+    if not rows:
+        raise ValueError(f"no eval Scaffolds in {split_path}")
+
+    tokenizer_path = Path(data["tokenizer"])
+    if not tokenizer_path.exists() and data.get("tokenizer_hub_source"):
+        fetch_file_from(data["tokenizer_hub_source"], "tokenizer.json", tokenizer_path)
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+
+    scaffolds = [Scaffold(**{f: row[f] for f in SLOT_FIELDS}) for row in rows]
+    sampling = config["sampling"]
+    seeds = [scaffold_seed(sampling["seed"], row["prompt_hash"]) for row in rows]
+
+    stage_models = {s["name"]: load_stage_model(s, device) for s in config["stages"]}
+    stage_fables = generate_all_stages(
+        stage_models, tokenizer, scaffolds, seeds, sampling,
+        device=device, generate_fn=generate_fn)
+
+    judge = build_judge(config["judge"])
+    win_rates = all_pairwise_win_rates(judge, scaffolds, stage_fables)
+
+    metrics_cfg = config.get("metrics", {})
+    sample_size = metrics_cfg.get("self_bleu_sample_size") or None
+    eval_ids = _encode_eval_tokens(tokenizer, rows)
+    metrics = {}
+    for name, model in stage_models.items():
+        m = reference_free_metrics(
+            stage_fables[name], self_bleu_sample_size=sample_size,
+            self_bleu_seed=metrics_cfg.get("self_bleu_seed", 0))
+        m["perplexity"] = perplexity(
+            model, eval_ids, block_size=model.config.context, device=device)
+        metrics[name] = m
+
+    sheet = sample_sheet_md(scaffolds, stage_fables, config.get("sample_sheet_k", 8))
+    results = {
+        "stage": "eval",
+        "package_version": __version__,
+        "eval_judge_id": judge.judge_id,
+        "sampling": {key: sampling[key]
+                     for key in ("max_new_tokens", "temperature", "top_p", "seed")},
+        "eval_scaffolds": [row["prompt_hash"] for row in rows],
+        "n_scaffolds": len(rows),
+        "stages": list(stage_models),
+        "win_rates": win_rates,
+        "metrics": metrics,
+        "config": config,
+    }
+    (out_dir / "results.json").write_text(json.dumps(results, indent=2),
+                                          encoding="utf-8")
+    (out_dir / "report.md").write_text(render_report(results, sheet),
+                                       encoding="utf-8")
+    hub_target = config.get("hub", {}).get("target")
+    if hub_target:
+        try_sync_to(hub_target, out_dir)
+    print(f"eval done: {len(rows)} Scaffolds, {len(stage_models)} stages, "
+          f"judge {judge.judge_id}")
+    return results
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", required=True, type=Path)
+    args = parser.parse_args(argv)
+    run(load_config(args.config))
+
+
+if __name__ == "__main__":
+    main()

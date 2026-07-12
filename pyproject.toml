@@ -38,6 +38,7 @@ ts2-sft = "tinystories_v2.sft:main"
 ts2-reward = "tinystories_v2.reward:main"
 ts2-demo = "tinystories_v2.demo:main"
 ts2-pref-data = "tinystories_v2.pref_data:main"
+ts2-eval = "tinystories_v2.eval:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

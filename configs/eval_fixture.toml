@@ -1,0 +1,31 @@
+# Toy CPU evaluation smoke against fixture artifacts — local sanity runs / docs.
+# Assumes upstream fixture stages have produced the eval split, a tokenizer, and
+# at least one checkpoint. Uses the deterministic fake Judge (no GPU/network).
+out_dir = "artifacts/eval_fixture"
+max_eval_scaffolds = 16
+sample_sheet_k = 4
+
+[data]
+eval_split = "artifacts/data_prep_fixture/splits/eval.jsonl"
+tokenizer = "artifacts/tokenizer_fixture/tokenizer.json"
+
+[[stages]]
+name = "base"
+local_dir = "artifacts/pretrain_fixture"
+
+[[stages]]
+name = "sft"
+local_dir = "artifacts/sft_fixture"
+
+[sampling]
+max_new_tokens = 32
+temperature = 0.8
+top_p = 0.95
+seed = 1337
+
+[metrics]
+self_bleu_sample_size = 0
+self_bleu_seed = 0
+
+[judge]
+kind = "fake_slot_coverage"

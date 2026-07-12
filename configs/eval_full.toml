@@ -1,0 +1,50 @@
+# Real evaluation run on Colab Pro. Cross-family eval Judge:
+# Llama-3.1-8B-Instruct fp16 on the L4 (on a T4, use 4-bit — set
+# model_id/precision accordingly). Never the Qwen Judge that produced the
+# reward signal (self-preference bias). Order-swapped double judging is applied
+# inside the stage. Stage checkpoints are pulled from the Hub on a fresh VM via
+# each [[stages]].hub_source. Add the RLAIF stage block once issue 06 lands.
+out_dir = "artifacts/eval_full"
+max_eval_scaffolds = 200       # cap so a run finishes within an L4 session
+sample_sheet_k = 8
+
+[data]
+eval_split = "artifacts/data_prep_full/splits/eval.jsonl"
+hub_source = "hf://congthanh991/tinystories-v2-data"
+tokenizer = "artifacts/tokenizer_full/tokenizer.json"
+tokenizer_hub_source = "hf://congthanh991/tinystories-v2-tokenizer"
+
+[[stages]]
+name = "base"
+local_dir = "artifacts/pretrain_full"
+hub_source = "hf://congthanh991/tinystories-v2-pretrain"
+
+[[stages]]
+name = "sft"
+local_dir = "artifacts/sft_full"
+hub_source = "hf://congthanh991/tinystories-v2-sft"
+
+# [[stages]]
+# name = "rlaif"
+# local_dir = "artifacts/grpo_full"
+# hub_source = "hf://congthanh991/tinystories-v2-grpo"
+
+[sampling]
+max_new_tokens = 400
+temperature = 0.8
+top_p = 0.95
+seed = 1337
+
+[metrics]
+self_bleu_sample_size = 200
+self_bleu_seed = 0
+
+[judge]
+kind = "transformers"
+model_id = "meta-llama/Llama-3.1-8B-Instruct"
+precision = "fp16"
+device = "cuda"
+max_new_tokens = 4
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-eval"
