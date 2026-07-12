@@ -25,6 +25,7 @@ uninterrupted run exactly (fp32 CPU; asserted by tests/test_sft_resume.py).
 
 import argparse
 import json
+import warnings
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -156,7 +157,12 @@ def run(config: dict, resume: bool = False) -> dict:
     start_step, tokens_seen = 0, 0
     if resume:
         if latest_checkpoint(ckpt_dir) is None and hub_target:
-            fetch_from(hub_target, out_dir)  # fresh Colab VM: pull previous session
+            try:
+                fetch_from(hub_target, out_dir)  # fresh VM: pull previous session
+            except Exception as err:  # noqa: BLE001 — first run: the repo may not exist yet
+                warnings.warn(
+                    f"could not fetch a prior SFT run from {hub_target!r}; "
+                    f"starting fresh: {err}", stacklevel=2)
         ckpt_path = latest_checkpoint(ckpt_dir)
         if ckpt_path is not None:
             state = load_checkpoint(ckpt_path)
@@ -187,20 +193,33 @@ def run(config: dict, resume: bool = False) -> dict:
         for group in optimizer.param_groups:
             group["lr"] = lr
         optimizer.zero_grad(set_to_none=True)
-        for micro_step in range(accum):
-            x, y, mask = get_sft_batch(examples, micro_bs, context,
-                                       seed=train["seed"], step=step,
-                                       micro_step=micro_step, device=device)
+        # Token-weight grad-accum: scale each micro-batch's masked mean by its
+        # share of the effective batch's active tokens (n_i / N) so the
+        # accumulated gradient is the true token-weighted mean over all accum
+        # micro-batches, not a mean of per-micro-batch means (which biases toward
+        # micro-batches with fewer active tokens under SFT masking). At accum=1
+        # this is loss * 1.0 == the previous loss / 1, so it is bitwise-identical
+        # to the old path on the single-micro-batch tests (incl. resume).
+        batches = [
+            get_sft_batch(examples, micro_bs, context, seed=train["seed"],
+                          step=step, micro_step=micro_step, device=device)
+            for micro_step in range(accum)
+        ]
+        counts = [int(mask.sum().item()) for _, _, mask in batches]
+        total_active = max(sum(counts), 1)
+        loss_sum = 0.0
+        for (x, y, mask), n in zip(batches, counts):
             with autocast:
                 logits = model(x)
-                loss = masked_lm_loss(logits, y, mask)
-            scaler.scale(loss / accum).backward()
-            tokens_seen += int(mask.sum().item())  # cumulative active target tokens
+                loss = masked_lm_loss(logits, y, mask)  # mean over this micro-batch
+            scaler.scale(loss * (n / total_active)).backward()
+            loss_sum += loss.item() * n
+            tokens_seen += n  # cumulative active target tokens
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), train["grad_clip"])
         scaler.step(optimizer)
         scaler.update()
-        loss_value = loss.item()  # last micro-batch masked loss (logged raw)
+        loss_value = loss_sum / total_active  # token-weighted masked mean over the batch
         done = step + 1
         if done % train["log_every"] == 0:
             logger.log({"loss": loss_value, "lr": lr, "tokens_seen": tokens_seen},

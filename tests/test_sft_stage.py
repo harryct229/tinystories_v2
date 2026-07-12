@@ -186,3 +186,37 @@ def test_cli_entrypoint_runs_standalone(tmp_path, prepared, make_init_checkpoint
     )
     assert result.returncode == 0, result.stderr
     assert (Path(config["out_dir"]) / "checkpoints" / "step_000002.pt").exists()
+
+
+def test_grad_accum_trains_and_decreases_loss(tmp_path, prepared, make_init_checkpoint):
+    # Exercises the production grad_accum>1 path (sft_full uses grad_accum=8),
+    # which the other stage tests (grad_accum=1) never reach.
+    init = make_init_checkpoint(tmp_path / "init", TOY_MODEL, prepared["tokenizer"])
+    config = sft_toy_config(tmp_path / "out", prepared, init, grad_accum=2)
+    summary = sft_run(config)
+    metrics = read_metrics(config["out_dir"])
+    assert len(metrics) == 30
+    assert metrics[-1]["loss"] < metrics[0]["loss"] - 0.5  # accum path still trains
+    import math
+    assert summary["step"] == 30 and math.isfinite(summary["loss"])
+
+
+def test_resume_with_missing_hub_target_starts_fresh(
+        tmp_path, prepared, make_init_checkpoint, monkeypatch):
+    # First real --resume on a fresh VM: the SFT Hub repo doesn't exist yet, so
+    # the resume-time fetch raises. The stage must warn and train from init,
+    # not crash.
+    import tinystories_v2.sft as sft_mod
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("repo not found")
+
+    monkeypatch.setattr(sft_mod, "fetch_from", _raise)
+    monkeypatch.setattr(sft_mod, "try_sync_to", lambda *a, **k: None)
+    init = make_init_checkpoint(tmp_path / "init", TOY_MODEL, prepared["tokenizer"])
+    config = sft_toy_config(tmp_path / "out", prepared, init, steps=2,
+                            checkpoint_every=2)
+    config["hub"] = {"target": "hf://example/does-not-exist"}
+    with pytest.warns(UserWarning, match="starting fresh"):
+        summary = sft_run(config, resume=True)
+    assert summary["step"] == 2  # trained from init despite the failed fetch
