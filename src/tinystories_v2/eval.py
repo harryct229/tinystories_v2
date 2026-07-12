@@ -137,3 +137,56 @@ def reference_free_metrics(fables: list[str], *,
         metrics["self_bleu"] = self_bleu(
             usable, sample_size=self_bleu_sample_size, seed=self_bleu_seed)
     return metrics
+
+
+def sample_sheet_md(scaffolds: list[Scaffold],
+                    stage_fables: dict[str, list[str]], k: int) -> str:
+    """The first k eval Scaffolds rendered by every stage side by side."""
+    names = list(stage_fables)
+    lines = ["# Qualitative sample sheet", ""]
+    for i, scaffold in enumerate(scaffolds[:k]):
+        lines.append(f"## Scaffold {i + 1}")
+        for field in SLOT_FIELDS:
+            lines.append(f"- **{field}**: {getattr(scaffold, field)}")
+        lines.append("")
+        for name in names:
+            lines.append(f"### {name}")
+            lines.append(stage_fables[name][i].strip() or "_(empty)_")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def _fmt(value) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
+
+
+def render_report(results: dict, sample_sheet: str) -> str:
+    """Report-pastable Markdown: win-rate tables, metric tables, sample sheet."""
+    lines = [
+        "# Evaluation report",
+        "",
+        f"Eval Judge: `{results['eval_judge_id']}`",
+        f"Held-out Scaffolds: {results['n_scaffolds']}",
+        "",
+        "## Win-rates (order-swapped double judging)",
+        "",
+        "| A | B | A wins | B wins | ties | skipped | n |",
+        "| - | - | ------ | ------ | ---- | ------- | - |",
+    ]
+    for w in results["win_rates"]:
+        lines.append(
+            f"| {w['stage_a']} | {w['stage_b']} | {w['wins_a']} | "
+            f"{w['wins_b']} | {w['ties']} | {w['skipped']} | {w['n']} |")
+    lines += [
+        "",
+        "## Reference-free metrics",
+        "",
+        "| stage | Distinct-1 | Distinct-2 | Self-BLEU | Flesch | Perplexity |",
+        "| ----- | ---------- | ---------- | --------- | ------ | ---------- |",
+    ]
+    for name, m in results["metrics"].items():
+        lines.append(
+            f"| {name} | {_fmt(m['mean_distinct_1'])} | {_fmt(m['distinct_2'])} "
+            f"| {_fmt(m['self_bleu'])} | {_fmt(m['mean_flesch_reading_ease'])} "
+            f"| {_fmt(m['perplexity'])} |")
+    return "\n".join(lines) + "\n\n" + sample_sheet
