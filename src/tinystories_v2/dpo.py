@@ -76,3 +76,57 @@ def dpo_loss(policy_chosen: torch.Tensor, policy_rejected: torch.Tensor,
     the chosen-minus-rejected completion log-ratio above the frozen reference's."""
     logits = (policy_chosen - policy_rejected) - (ref_chosen - ref_rejected)
     return -F.logsigmoid(beta * logits).mean()
+
+
+def encode_pairs(tokenizer, pairs: list) -> list[dict]:
+    """Precompute (ids, loss_mask) for the chosen and rejected completion of each
+    pair via the Slot Prompt encoder: each is <|character|>…<|fable|>{body}<|end|>
+    with the mask active over the body + <|end|> only (encode_example)."""
+    encoded = []
+    for pair in pairs:
+        chosen = encode_example(tokenizer, pair.scaffold, pair.chosen)
+        rejected = encode_example(tokenizer, pair.scaffold, pair.rejected)
+        encoded.append({"chosen_ids": chosen.input_ids, "chosen_mask": chosen.loss_mask,
+                        "rejected_ids": rejected.input_ids,
+                        "rejected_mask": rejected.loss_mask})
+    return encoded
+
+
+def _pad_shifted(ids_list: list[list[int]], mask_list: list[list[int]],
+                 context: int, device: str) -> tuple[torch.Tensor, ...]:
+    """Right-pad (ids, loss_mask) rows into next-token (x, y, mask) tensors. Each
+    row is truncated to context+1 ids, then shifted: x = ids[:-1], y = ids[1:],
+    mask = loss_mask[1:] (active over body + <|end|>). Rows are padded to the
+    batch's longest x with id 0 / mask 0; causal attention makes right-padding
+    safe and padding never contributes to a completion log-prob."""
+    rows = []
+    for ids, m in zip(ids_list, mask_list):
+        ids, m = ids[:context + 1], m[:context + 1]
+        rows.append((ids[:-1], ids[1:], m[1:]))
+    width = max(len(x) for x, _, _ in rows)
+    xs, ys, ms = [], [], []
+    for x, y, m in rows:
+        pad = width - len(x)
+        xs.append(x + [0] * pad)
+        ys.append(y + [0] * pad)
+        ms.append([float(v) for v in m] + [0.0] * pad)
+    return (torch.tensor(xs, dtype=torch.long, device=device),
+            torch.tensor(ys, dtype=torch.long, device=device),
+            torch.tensor(ms, dtype=torch.float, device=device))
+
+
+def get_pair_batch(train: list[dict], micro_batch_size: int, context: int, *,
+                   seed: int, step: int, micro_step: int,
+                   device: str = "cpu") -> tuple[tuple, tuple]:
+    """A (chosen_xyz, rejected_xyz) micro-batch sampled with replacement; a pure
+    function of (seed, step, micro_step) so a resumed run replays it (resume
+    contract). chosen and rejected are padded independently."""
+    generator = torch.Generator()
+    generator.manual_seed(((seed * 1_000_003 + step) * 1_009 + micro_step) % 2**63)
+    picks = torch.randint(0, len(train), (micro_batch_size,),
+                          generator=generator).tolist()
+    chosen = _pad_shifted([train[i]["chosen_ids"] for i in picks],
+                          [train[i]["chosen_mask"] for i in picks], context, device)
+    rejected = _pad_shifted([train[i]["rejected_ids"] for i in picks],
+                            [train[i]["rejected_mask"] for i in picks], context, device)
+    return chosen, rejected
