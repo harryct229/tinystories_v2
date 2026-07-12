@@ -1,6 +1,6 @@
 # 03 — SFT stage: Slot Prompt format and masked-loss fine-tuning
 
-Status: code-complete — real run unblocked (issue 02's Pretraining checkpoint is on the Hub)
+Status: complete — real SFT run done 2026-07-12 (800 steps / 50,572 examples, Colab L4 bf16, final masked loss 1.083; model on HF Hub congthanh991/tinystories-v2-sft; ts2-demo generates Scaffold-conditioned fables)
 
 ## Parent
 
