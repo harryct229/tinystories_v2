@@ -29,7 +29,8 @@ def test_render_report_has_winrate_and_metric_tables_with_counts():
         "eval_judge_id": "fake:slot-coverage-v1",
         "n_scaffolds": 3,
         "win_rates": [{"stage_a": "base", "stage_b": "sft", "wins_a": 1,
-                       "wins_b": 2, "ties": 0, "skipped": 0, "n": 3}],
+                       "wins_b": 2, "ties": 0, "skipped": 0, "judge_error": 0,
+                       "n": 3}],
         "metrics": {
             "base": {"mean_distinct_1": 0.5, "distinct_2": 0.9,
                      "self_bleu": 0.1, "mean_flesch_reading_ease": 80.0,
@@ -41,7 +42,7 @@ def test_render_report_has_winrate_and_metric_tables_with_counts():
     }
     report = render_report(results, "SAMPLE-SHEET-BODY")
     assert "fake:slot-coverage-v1" in report          # eval judge identity
-    assert "| base | sft | 1 | 2 | 0 | 0 | 3 |" in report   # win-rate counts
+    assert "| base | sft | 1 | 2 | 0 | 0 | 0 | 3 |" in report   # win-rate counts
     assert "| base |" in report and "42.000" in report      # metric row
     assert "n/a" in report                            # None -> n/a
     assert report.rstrip().endswith("SAMPLE-SHEET-BODY")     # sheet embedded last

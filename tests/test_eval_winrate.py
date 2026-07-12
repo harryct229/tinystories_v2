@@ -34,7 +34,8 @@ def test_win_rate_table_counts_wins_and_skips_degenerate_pairs():
     table = win_rate_table(SlotCoverageFakeJudge(), scaffolds,
                            "sft", fables_a, "base", fables_b)
     assert table == {"stage_a": "sft", "stage_b": "base", "wins_a": 2,
-                     "wins_b": 0, "ties": 0, "skipped": 1, "n": 3}
+                     "wins_b": 0, "ties": 0, "skipped": 1, "judge_error": 0,
+                     "n": 3}
 
 
 def test_win_rate_table_rejects_misaligned_lists():
@@ -42,6 +43,23 @@ def test_win_rate_table_rejects_misaligned_lists():
     with pytest.raises(ValueError, match="align"):
         win_rate_table(SlotCoverageFakeJudge(), [SCAFFOLD], "a", [RICH],
                        "b", [BLAND, RICH])
+
+
+def test_win_rate_table_counts_unparseable_verdicts_as_judge_error():
+    from tinystories_v2.judge import JudgeOutputError
+
+    class _RaisingJudge:
+        judge_id = "fake:raises-v1"
+
+        def compare(self, scaffold, fable_a, fable_b):
+            raise JudgeOutputError("unparseable verdict")
+
+    scaffolds = [SCAFFOLD, SCAFFOLD]
+    table = win_rate_table(_RaisingJudge(), scaffolds,
+                           "sft", [RICH, RICH], "base", [BLAND, BLAND])
+    assert table["judge_error"] == 2
+    assert table["wins_a"] == table["wins_b"] == table["ties"] == table["skipped"] == 0
+    assert table["n"] == 2
 
 
 def test_all_pairwise_win_rates_covers_each_unordered_stage_pair():

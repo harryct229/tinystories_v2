@@ -37,7 +37,7 @@ from tinystories_v2.checkpoint import latest_checkpoint, load_checkpoint
 from tinystories_v2.config import load_config, load_env
 from tinystories_v2.generate import sample
 from tinystories_v2.hub import fetch_file_from, fetch_from, try_sync_to
-from tinystories_v2.judge import Verdict, build_judge, normalize_text
+from tinystories_v2.judge import JudgeOutputError, Verdict, build_judge, normalize_text
 from tinystories_v2.metrics import (
     distinct_n, mean_distinct_n, mean_flesch_reading_ease, self_bleu,
     tokenize_words,
@@ -79,12 +79,19 @@ def win_rate_table(judge, scaffolds: list[Scaffold], stage_a: str,
     are skipped, not counted as ties."""
     if not (len(scaffolds) == len(fables_a) == len(fables_b)):
         raise ValueError("scaffolds and both fable lists must align")
-    wins_a = wins_b = ties = skipped = 0
+    wins_a = wins_b = ties = skipped = judge_error = 0
     for scaffold, fa, fb in zip(scaffolds, fables_a, fables_b):
         if _degenerate(fa, fb):
             skipped += 1
             continue
-        outcome = stage_win(judge, scaffold, fa, fb)
+        try:
+            outcome = stage_win(judge, scaffold, fa, fb)
+        except JudgeOutputError:
+            # One malformed real-Judge verdict must not abort the whole eval
+            # after all generation (mirrors pref_data.label_scaffold). Count it
+            # and move on; it is neither a win nor a genuine tie.
+            judge_error += 1
+            continue
         if outcome == "a":
             wins_a += 1
         elif outcome == "b":
@@ -93,7 +100,7 @@ def win_rate_table(judge, scaffolds: list[Scaffold], stage_a: str,
             ties += 1
     return {"stage_a": stage_a, "stage_b": stage_b, "wins_a": wins_a,
             "wins_b": wins_b, "ties": ties, "skipped": skipped,
-            "n": len(scaffolds)}
+            "judge_error": judge_error, "n": len(scaffolds)}
 
 
 def all_pairwise_win_rates(judge, scaffolds: list[Scaffold],
@@ -170,13 +177,14 @@ def render_report(results: dict, sample_sheet: str) -> str:
         "",
         "## Win-rates (order-swapped double judging)",
         "",
-        "| A | B | A wins | B wins | ties | skipped | n |",
-        "| - | - | ------ | ------ | ---- | ------- | - |",
+        "| A | B | A wins | B wins | ties | skipped | judge err | n |",
+        "| - | - | ------ | ------ | ---- | ------- | --------- | - |",
     ]
     for w in results["win_rates"]:
         lines.append(
             f"| {w['stage_a']} | {w['stage_b']} | {w['wins_a']} | "
-            f"{w['wins_b']} | {w['ties']} | {w['skipped']} | {w['n']} |")
+            f"{w['wins_b']} | {w['ties']} | {w['skipped']} | "
+            f"{w['judge_error']} | {w['n']} |")
     lines += [
         "",
         "## Reference-free metrics",

@@ -16,8 +16,8 @@ sheet). Stages share nothing in memory; downstream readers consume `results.json
 | `eval_scaffolds` | string[] | The held-out eval Scaffold `prompt_hash`es scored, in order — the same set for every stage. |
 | `n_scaffolds` | int | `len(eval_scaffolds)`. |
 | `stages` | string[] | Stage names in config order (e.g. `["base","sft"]`, `["base","sft","rlaif"]`). |
-| `win_rates` | object[] | One entry per unordered stage pair. Each: `stage_a`, `stage_b`, `wins_a`, `wins_b`, `ties`, `skipped`, `n`. A win requires consistency under order-swapped double judging; `ties` are inconsistent verdicts; `skipped` are degenerate (empty/identical) comparisons; `wins_a + wins_b + ties + skipped == n`. |
-| `metrics` | object | Keyed by stage name. Each value: `mean_distinct_1`, `distinct_2`, `self_bleu`, `mean_flesch_reading_ease` (issue 11's reference-free metrics; `null` when undefined for the usable set), `n_usable` (fables with word tokens), and `perplexity` (held-out perplexity of that checkpoint on the eval fables). |
+| `win_rates` | object[] | One entry per unordered stage pair. Each: `stage_a`, `stage_b`, `wins_a`, `wins_b`, `ties`, `skipped`, `judge_error`, `n`. A win requires consistency under order-swapped double judging; `ties` are inconsistent verdicts; `skipped` are degenerate (empty/identical) comparisons; `judge_error` are comparisons the real Judge answered with an unparseable verdict (`JudgeOutputError`), skipped rather than aborting the run; `wins_a + wins_b + ties + skipped + judge_error == n`. |
+| `metrics` | object | Keyed by stage name. Each value: `mean_distinct_1`, `distinct_2`, `self_bleu`, `mean_flesch_reading_ease` (issue 11's reference-free metrics; `null` when undefined for the usable set), `n_usable` (fables with word tokens), and `perplexity` (held-out perplexity of that checkpoint on the eval fables). Per-stage `perplexity` uses each checkpoint's own `context` as the block size, so it is strictly comparable only across checkpoints that share the same context length (all current FableLM stages do). |
 | `config` | object | The exact TOML config, echoed for provenance. |
 
 ## Guarantees

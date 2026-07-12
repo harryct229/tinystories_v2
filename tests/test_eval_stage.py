@@ -65,7 +65,7 @@ def test_eval_stage_produces_the_results_artifact(tmp_path, fixture_path,
     assert len(saved["win_rates"]) == 1
     w = saved["win_rates"][0]
     assert (w["stage_a"], w["stage_b"]) == ("base", "sft")
-    assert w["wins_a"] + w["wins_b"] + w["ties"] + w["skipped"] == w["n"]
+    assert w["wins_a"] + w["wins_b"] + w["ties"] + w["skipped"] + w["judge_error"] == w["n"]
     assert w["n"] == saved["n_scaffolds"]
     # Metric table per stage, with perplexity attached.
     assert set(saved["metrics"]) == {"base", "sft"}
