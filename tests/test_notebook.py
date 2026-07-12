@@ -93,3 +93,24 @@ def test_reward_notebook_has_no_secrets_or_outputs():
     assert "hf_" not in text
     cells = json.loads(text)["cells"]
     assert all(not c.get("outputs") for c in cells)
+
+
+EVAL_NOTEBOOK = Path(__file__).parent.parent / "notebooks" / "eval_colab.ipynb"
+
+
+def test_eval_notebook_is_thin():
+    cells = json.loads(EVAL_NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    code_cells = [c for c in cells if c["cell_type"] == "code"]
+    assert 1 <= len(code_cells) <= 4
+    source = "\n".join("".join(c["source"]) for c in code_cells)
+    for forbidden in ("def ", "class ", "import torch", "for ", "while "):
+        assert forbidden not in source, forbidden
+    # Turnkey: the notebook invokes the one-command bootstrap, not the stage.
+    assert "scripts/eval_colab.py" in source
+
+
+def test_eval_notebook_has_no_secrets_or_outputs():
+    text = EVAL_NOTEBOOK.read_text(encoding="utf-8")
+    assert "hf_" not in text
+    cells = json.loads(text)["cells"]
+    assert all(not c.get("outputs") for c in cells)
