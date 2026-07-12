@@ -12,10 +12,13 @@ _Last updated: 2026-07-12_
 - 🔄 **Real Pretraining run in progress on a VM** (issue 02 — code complete,
   all acceptance criteria met). Watch the W&B loss curve; checkpoints sync to
   the Hub.
-- 🟢 Highest-leverage grab: **issue 03** (SFT stage + demo) — unblocked now
-  that issue 12 landed; its code needs only issue 02's stage/loop conventions
-  (a real SFT run additionally waits on 02's Pretraining checkpoint). It gates
-  the whole wave-3 chain (04, 07, and downstream).
+- ✅ **Issue 03 (SFT stage + demo) code complete** — `ts2-sft` stage,
+  `ts2-demo` script, and the thin `sft_colab.ipynb` all landed with tests
+  green. A real SFT run still waits on issue 02's Pretraining checkpoint (in
+  flight on the VM). Unblocks **issue 04** (preference labeling); issue 07
+  (eval) is still blocked on issue 11.
+- 🟢 Highest-leverage grabs now: **issue 04** (unblocked by 03), and the
+  ready code-work issues **05, 08, 09, 11**.
 
 ## Issue board
 
@@ -29,8 +32,8 @@ _Last updated: 2026-07-12_
 | 05 | Reward Model stage + accuracy gate | 02 ✅code, 10 ✅ | 🟢 ready (code work) |
 | 08 | DPO fallback stage | 02 ✅code, 10 ✅ | 🟢 ready (code work) |
 | 09 | Architecture ablation at 5M scale | 02 ✅code | 🟢 ready |
-| 03 | SFT stage + demo script | 02 ✅code, 12 ✅ | 🟢 ready ← **grab this** |
-| 04 | Preference labeling stage | 03, 10 ✅ | 🔴 blocked |
+| 03 | SFT stage + demo script | 02 ✅code, 12 ✅ | ✅ code complete (real run gated on 02's checkpoint) |
+| 04 | Preference labeling stage | 03 ✅code, 10 ✅ | 🟢 ready (code work) |
 | 07 | Evaluation suite | 03, 10 ✅, 11 ⏳ | 🔴 blocked |
 | 06 | GRPO stage | 05, 11 ⏳ | 🔴 blocked |
 
@@ -44,13 +47,20 @@ accuracy gate (~68% held-out pair accuracy).
 |------|---------|--------|
 | W1 | repo skeleton, tokenizer, splits, packed data | ✅ done 2026-07-11 (day 1) |
 | W2 | Pretraining runs | 🔄 started 2026-07-12 — ahead of schedule |
-| W3 | SFT | issue 12 ✅ done 2026-07-12; SFT (03) unblocked |
+| W3 | SFT | issue 12 ✅ + SFT (03) code-complete 2026-07-12; real run waits on 02's checkpoint |
 | W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling waits on SFT |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
 | W7–8 | eval suite, 5M ablation, report | — |
 
 ## Log
 
+- **2026-07-12** — Issue 03 (SFT stage + demo) code complete: `sft.py` stage
+  (masked-loss fine-tune from a Pretraining checkpoint, checkpoint-resume,
+  `ts2-sft`), `demo.py` (`ts2-demo`), `configs/sft_{fixture,full}.toml`,
+  `notebooks/sft_colab.ipynb`, and tests (batching, stage, kill-resume,
+  `<|end|>` format-learning, demo, notebook). 143 tests green. Real SFT run
+  still gated on issue 02's Pretraining checkpoint (in flight on the VM).
+  Unblocks issue 04.
 - **2026-07-12** — Issue 12 (Slot Prompt renderer + SFT dataset builder)
   complete and merged to main: render/encode/parse in `slot_prompt.py`, the
   `sft_data` stage + `sft-example-v1` schema, 123 tests green. Unblocks issue
