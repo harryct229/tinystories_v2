@@ -26,56 +26,16 @@ they move.
 """
 
 import argparse
-import time
 from pathlib import Path
 
 from tinystories_v2 import sft, sft_data
 from tinystories_v2.config import load_config, load_env
+from tinystories_v2.hub_download import download_file, retry  # noqa: F401 — re-exported for tests
 
 TOKENIZER_REPO = "congthanh991/tinystories-v2-tokenizer"
 DATA_REPO = "congthanh991/tinystories-v2-data"
 DEFAULT_SFT_DATA_CONFIG = "configs/sft_data_full.toml"
 DEFAULT_SFT_CONFIG = "configs/sft_full.toml"
-
-
-def retry(fn, *, attempts: int = 5, base_delay: float = 2.0, what: str = "operation"):
-    """Call fn(), retrying on any exception with exponential backoff. Colab's
-    Hub/network calls hit intermittent ConnectionResetError; a few retries make
-    the bootstrap survive them instead of dying on a fresh VM."""
-    for attempt in range(attempts):
-        try:
-            return fn()
-        except Exception as err:  # noqa: BLE001 — transient network faults are the norm here
-            if attempt == attempts - 1:
-                raise
-            delay = base_delay * 2**attempt
-            print(f"[sft_colab] {what} failed ({err!r}); "
-                  f"retry {attempt + 1}/{attempts - 1} in {delay:.0f}s")
-            time.sleep(delay)
-
-
-def download_file(repo_id: str, filename: str, local_dir: Path) -> Path:
-    """Download one file from the Hub into local_dir (so it lands at
-    local_dir/filename), retry-wrapped and tolerant of the repo being a model or
-    a dataset repo. Returns the local path."""
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.utils import RepositoryNotFoundError
-
-    local_dir = Path(local_dir)
-    local_dir.mkdir(parents=True, exist_ok=True)
-
-    def _fetch() -> str:
-        last: Exception | None = None
-        for repo_type in ("model", "dataset"):
-            try:
-                return hf_hub_download(repo_id=repo_id, filename=filename,
-                                       repo_type=repo_type, local_dir=str(local_dir))
-            except RepositoryNotFoundError as err:  # try the other repo type
-                last = err
-        raise last  # both repo types missing — surface the last error
-
-    retry(_fetch, what=f"download {repo_id}/{filename}")
-    return local_dir / filename
 
 
 def prepare(sft_data_config, sft_config, *, download=None) -> Path:

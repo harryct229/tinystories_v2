@@ -20,6 +20,14 @@ _Last updated: 2026-07-12_
   (`congthanh991/tinystories-v2-sft`); `ts2-demo` generates coherent
   Scaffold-conditioned fables (W&B dashboard live this run). Unblocks **issue 04**
   (preference labeling); with issue 11 done, **issue 07** (evaluation) is ready too.
+- ✅ **Issue 05 (Reward Model stage + accuracy gate) code complete** — `ts2-reward`
+  stage (Bradley-Terry loss on the SFT backbone + a scalar head, deterministic
+  held-out split, checkpoint-resume), the shared `gate.check_reward_gate`
+  (~68% default), `configs/reward_{fixture,full}.toml`, the one-command
+  `scripts/reward_colab.py` bootstrap + `reward_colab.ipynb`, and the
+  `reward-model-artifact-v1` schema all landed with tests green. The real run
+  consumes issue 03's SFT checkpoint and issue 04's labeled pairs. Unblocks
+  **issue 06** (GRPO), which enforces the gate at startup.
 - ✅ **Issue 11 (reference-free metrics) complete** — pooled and paper-aligned
   per-Fable Distinct-n, seeded Self-BLEU, Flesch Reading Ease, and a lazy-Torch
   held-out perplexity helper are merged with CPU-only deterministic tests.
@@ -40,13 +48,13 @@ _Last updated: 2026-07-12_
 | 02 | Model + Pretraining stage | 01 | ✅ complete — real run done, model on Hub |
 | 11 | Reference-free metrics library | — | ✅ complete |
 | 12 | Slot Prompt renderer + SFT dataset builder | — | ✅ complete |
-| 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | 🟢 ready (code work) |
+| 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | ✅ code complete (real run needs 03 ckpt + 04 labels) |
 | 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ code complete (real run ready — 03's SFT checkpoint on Hub) |
 | 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | 🟢 ready (code work) |
-| 06 | GRPO stage | 05 ⏳, 11 ✅ | 🔴 blocked on issue 05 |
+| 06 | GRPO stage | 05 ✅code, 11 ✅ | 🟢 ready (code work) |
 
 Production-run gates (beyond code): 03's SFT checkpoint is now on the Hub; 05
 and 08 still need 04's real labels; 06 additionally needs 05's Reward Model to
@@ -65,6 +73,17 @@ clear the accuracy gate (~68% held-out pair accuracy).
 
 ## Log
 
+- **2026-07-12** — Issue 05 (Reward Model stage + accuracy gate) code complete:
+  `reward_model.py` (FableLM backbone + scalar head, last-real-token scoring,
+  hand-written Bradley-Terry loss), `reward.py` stage (`ts2-reward`, deterministic
+  train/holdout split, checkpoint-resume, held-out accuracy + split recipe in the
+  manifest), `gate.py` (`check_reward_gate`, ~68% default), configs, the
+  `scripts/reward_colab.py` bootstrap (shared `hub_download` helper, extracted
+  from `sft_colab.py`), thin `reward_colab.ipynb`, and
+  `docs/schemas/reward-model-artifact-v1.md`. Added a behavior-preserving
+  `FableLM.hidden_states` seam. Tests: scoring/padding-invariance, batching,
+  separable fake-Judge pairs beat chance on held-out, kill-and-resume bitwise,
+  gate refusal, and bootstrap orchestration. Unblocks issue 06 (GRPO).
 - **2026-07-12** — Issue 04 (preference labeling) code complete:
   `pref_data.py` stage (`ts2-pref-data`) with per-Scaffold seeded sampling,
   round-robin pairing, order-swap consistency filtering, a per-Scaffold

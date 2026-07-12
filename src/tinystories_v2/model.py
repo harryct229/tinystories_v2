@@ -131,7 +131,10 @@ class FableLM(nn.Module):
         # parameters() deduplicates shared tensors, so tied weights count once.
         return sum(p.numel() for p in self.parameters())
 
-    def forward(self, idx: torch.Tensor) -> torch.Tensor:
+    def hidden_states(self, idx: torch.Tensor) -> torch.Tensor:
+        """Token embeddings through the final RMSNorm: the [B, T, d_model] states
+        the LM head reads. Exposed as a seam so the Reward Model (issue 05) can
+        attach a scalar head to the same backbone (ADR-0005)."""
         if idx.size(1) > self.config.context:
             raise ValueError(
                 f"sequence length {idx.size(1)} exceeds context {self.config.context}"
@@ -139,4 +142,7 @@ class FableLM(nn.Module):
         x = self.tok_emb(idx)
         for block in self.blocks:
             x = block(x, self.rope_cos, self.rope_sin)
-        return self.lm_head(self.final_norm(x))
+        return self.final_norm(x)
+
+    def forward(self, idx: torch.Tensor) -> torch.Tensor:
+        return self.lm_head(self.hidden_states(idx))

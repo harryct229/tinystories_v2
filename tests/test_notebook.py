@@ -70,3 +70,26 @@ def test_pref_data_notebook_has_no_secrets_or_outputs():
     assert "hf_" not in text  # no literal HF token prefixes
     cells = json.loads(text)["cells"]
     assert all(not c.get("outputs") for c in cells)
+
+
+REWARD_NOTEBOOK = Path(__file__).parent.parent / "notebooks" / "reward_colab.ipynb"
+
+
+def test_reward_notebook_is_thin():
+    cells = json.loads(REWARD_NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    code_cells = [c for c in cells if c["cell_type"] == "code"]
+    assert 1 <= len(code_cells) <= 4
+    source = "\n".join("".join(c["source"]) for c in code_cells)
+    for forbidden in ("def ", "class ", "import torch", "for ", "while "):
+        assert forbidden not in source, forbidden
+    # Turnkey: the notebook invokes the one-command bootstrap (which itself
+    # downloads the tokenizer + pairs, then runs ts2-reward --resume) rather
+    # than the stage directly.
+    assert "scripts/reward_colab.py" in source
+
+
+def test_reward_notebook_has_no_secrets_or_outputs():
+    text = REWARD_NOTEBOOK.read_text(encoding="utf-8")
+    assert "hf_" not in text
+    cells = json.loads(text)["cells"]
+    assert all(not c.get("outputs") for c in cells)

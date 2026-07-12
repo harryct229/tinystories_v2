@@ -1,0 +1,45 @@
+# Toy CPU wiring smoke against fixture artifacts — local sanity runs and docs.
+# Assumes an SFT-shaped init checkpoint and a preference-pair jsonl exist with a
+# matching [model] block. Real runs use configs/reward_full.toml. Stage behavior
+# is guarded by tests/test_reward_*.py.
+out_dir = "artifacts/reward_fixture"
+
+# Must match the SFT checkpoint's architecture (sft_fixture.toml / pretrain_fixture.toml).
+[model]
+vocab_size = 512
+d_model = 64
+n_layers = 2
+n_heads = 2
+context = 64
+ffn_hidden = 192
+
+[data]
+pairs_path = "artifacts/pref_fixture/pairs.jsonl"   # issue 04 preference artifact
+tokenizer_path = "artifacts/tokenizer_fixture/tokenizer.json"
+
+[init]
+local_dir = "artifacts/sft_fixture"   # contains checkpoints/step_*.pt
+
+[split]
+holdout_frac = 0.2
+seed = 20260712
+
+[train]
+steps = 60
+micro_batch_size = 8
+grad_accum = 1
+peak_lr = 1e-3
+warmup_frac = 0.1
+min_lr_frac = 0.1
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "fp32"
+seed = 1337
+checkpoint_every = 20
+log_every = 1
+keep_last = 0
+
+[wandb]
+enabled = false
