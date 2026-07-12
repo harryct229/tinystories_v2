@@ -38,8 +38,9 @@ def test_sft_notebook_is_thin():
     source = "\n".join("".join(c["source"]) for c in code_cells)
     for forbidden in ("def ", "class ", "import torch", "for ", "while "):
         assert forbidden not in source, forbidden
-    assert "ts2-sft" in source
-    assert "--resume" in source
+    # Turnkey: the notebook invokes the one-command bootstrap (which itself runs
+    # ts2-sft-data then ts2-sft --resume) rather than the stage directly.
+    assert "scripts/sft_colab.py" in source
 
 
 def test_sft_notebook_has_no_secrets_or_outputs():
