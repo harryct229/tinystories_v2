@@ -1,17 +1,23 @@
-"""Hand-written Llama-style decoder-only LM (ADR-0002, ADR-0005).
+"""Hand-written decoder-only Fable LM (ADR-0002, ADR-0005).
 
-Pre-norm RMSNorm, RoPE, SwiGLU FFN, no biases, tied embeddings, dropout 0.0
-(single-pass data regime). Fully config-driven: the toy test config and the
-real ~30M config differ only in numbers. Report citations per component:
-RMSNorm (Zhang & Sennrich 2019), RoPE (Su et al. 2021), SwiGLU (Shazeer 2020).
+The default remains the production Llama-style stack: pre-norm RMSNorm,
+RoPE, SwiGLU, no biases, tied embeddings, and dropout 0.0. Issue 09 adds two
+config-selected, one-component ablations at ~5M scale: learned absolute
+positions instead of RoPE, and a parameter-matched GELU MLP instead of
+SwiGLU. Existing configs omit both selectors and therefore retain the exact
+original architecture and checkpoint key layout.
 """
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+PositionEncoding = Literal["rope", "learned"]
+MLPType = Literal["swiglu", "gelu"]
 
 
 @dataclass(frozen=True)
@@ -24,6 +30,8 @@ class ModelConfig:
     ffn_hidden: int
     rope_theta: float = 10000.0
     norm_eps: float = 1e-5
+    position_encoding: PositionEncoding = "rope"
+    mlp_type: MLPType = "swiglu"
 
 
 class RMSNorm(nn.Module):
@@ -33,24 +41,32 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Normalize in fp32 for stability under bf16/fp16 autocast, then cast back.
-        norm = x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps)
+        norm = x.float() * torch.rsqrt(
+            x.float().pow(2).mean(-1, keepdim=True) + self.eps
+        )
         return self.weight * norm.type_as(x)
 
 
-def _rope_cache(head_dim: int, context: int, theta: float) -> tuple[torch.Tensor, torch.Tensor]:
-    inv_freq = 1.0 / theta ** (torch.arange(0, head_dim, 2).float() / head_dim)
+def _rope_cache(
+    head_dim: int, context: int, theta: float
+) -> tuple[torch.Tensor, torch.Tensor]:
+    inv_freq = 1.0 / theta ** (
+        torch.arange(0, head_dim, 2).float() / head_dim
+    )
     positions = torch.arange(context).float()
-    freqs = torch.outer(positions, inv_freq)  # [context, head_dim//2]
+    freqs = torch.outer(positions, inv_freq)
     return freqs.cos(), freqs.sin()
 
 
-def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    # x: [B, H, T, D]; rotate interleaved pairs (x0,x1), (x2,x3), ...
+def _apply_rope(
+    x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> torch.Tensor:
     t = x.size(-2)
     cos, sin = cos[:t].to(x.dtype), sin[:t].to(x.dtype)
     x1, x2 = x[..., 0::2], x[..., 1::2]
-    return torch.stack((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1).flatten(-2)
+    return torch.stack(
+        (x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1
+    ).flatten(-2)
 
 
 class Attention(nn.Module):
@@ -63,26 +79,57 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(config.d_model, config.d_model, bias=False)
         self.o_proj = nn.Linear(config.d_model, config.d_model, bias=False)
 
-    def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        b, t, d = x.shape
-        shape = (b, t, self.n_heads, self.head_dim)
-        q = self.q_proj(x).view(shape).transpose(1, 2)
-        k = self.k_proj(x).view(shape).transpose(1, 2)
-        v = self.v_proj(x).view(shape).transpose(1, 2)
-        q, k = _apply_rope(q, cos, sin), _apply_rope(k, cos, sin)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-        return self.o_proj(y.transpose(1, 2).reshape(b, t, d))
+    def forward(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor | None,
+        sin: torch.Tensor | None,
+    ) -> torch.Tensor:
+        batch, time, width = x.shape
+        shape = (batch, time, self.n_heads, self.head_dim)
+        query = self.q_proj(x).view(shape).transpose(1, 2)
+        key = self.k_proj(x).view(shape).transpose(1, 2)
+        value = self.v_proj(x).view(shape).transpose(1, 2)
+        if cos is not None and sin is not None:
+            query = _apply_rope(query, cos, sin)
+            key = _apply_rope(key, cos, sin)
+        output = F.scaled_dot_product_attention(
+            query, key, value, is_causal=True
+        )
+        return self.o_proj(output.transpose(1, 2).reshape(batch, time, width))
 
 
 class SwiGLU(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        self.gate_proj = nn.Linear(config.d_model, config.ffn_hidden, bias=False)
-        self.up_proj = nn.Linear(config.d_model, config.ffn_hidden, bias=False)
-        self.down_proj = nn.Linear(config.ffn_hidden, config.d_model, bias=False)
+        self.gate_proj = nn.Linear(
+            config.d_model, config.ffn_hidden, bias=False
+        )
+        self.up_proj = nn.Linear(
+            config.d_model, config.ffn_hidden, bias=False
+        )
+        self.down_proj = nn.Linear(
+            config.ffn_hidden, config.d_model, bias=False
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj(
+            F.silu(self.gate_proj(x)) * self.up_proj(x)
+        )
+
+
+class GELUMLP(nn.Module):
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.up_proj = nn.Linear(
+            config.d_model, config.ffn_hidden, bias=False
+        )
+        self.down_proj = nn.Linear(
+            config.ffn_hidden, config.d_model, bias=False
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.down_proj(F.gelu(self.up_proj(x)))
 
 
 class Block(nn.Module):
@@ -91,9 +138,18 @@ class Block(nn.Module):
         self.attn_norm = RMSNorm(config.d_model, config.norm_eps)
         self.attn = Attention(config)
         self.mlp_norm = RMSNorm(config.d_model, config.norm_eps)
-        self.mlp = SwiGLU(config)
+        self.mlp = (
+            SwiGLU(config)
+            if config.mlp_type == "swiglu"
+            else GELUMLP(config)
+        )
 
-    def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor | None,
+        sin: torch.Tensor | None,
+    ) -> torch.Tensor:
         x = x + self.attn(self.attn_norm(x), cos, sin)
         return x + self.mlp(self.mlp_norm(x))
 
@@ -103,24 +159,55 @@ class FableLM(nn.Module):
         super().__init__()
         if config.d_model % config.n_heads != 0:
             raise ValueError(
-                f"d_model={config.d_model} not divisible by n_heads={config.n_heads}"
+                f"d_model={config.d_model} not divisible by "
+                f"n_heads={config.n_heads}"
             )
+        if config.position_encoding not in ("rope", "learned"):
+            raise ValueError(
+                "position_encoding must be 'rope' or 'learned', got "
+                f"{config.position_encoding!r}"
+            )
+        if config.mlp_type not in ("swiglu", "gelu"):
+            raise ValueError(
+                f"mlp_type must be 'swiglu' or 'gelu', got {config.mlp_type!r}"
+            )
+
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.d_model)
-        self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
+        self.pos_emb = (
+            nn.Embedding(config.context, config.d_model)
+            if config.position_encoding == "learned"
+            else None
+        )
+        self.blocks = nn.ModuleList(
+            Block(config) for _ in range(config.n_layers)
+        )
         self.final_norm = RMSNorm(config.d_model, config.norm_eps)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-        self.lm_head.weight = self.tok_emb.weight  # tied embeddings (param budget)
-        cos, sin = _rope_cache(config.d_model // config.n_heads, config.context,
-                               config.rope_theta)
+        self.lm_head = nn.Linear(
+            config.d_model, config.vocab_size, bias=False
+        )
+        self.lm_head.weight = self.tok_emb.weight
+
+        if config.position_encoding == "rope":
+            cos, sin = _rope_cache(
+                config.d_model // config.n_heads,
+                config.context,
+                config.rope_theta,
+            )
+        else:
+            cos, sin = None, None
         self.register_buffer("rope_cos", cos, persistent=False)
         self.register_buffer("rope_sin", sin, persistent=False)
+
         self.apply(self._init_weights)
-        # GPT-2-style scaled init on residual-output projections.
         residual_std = 0.02 / math.sqrt(2 * config.n_layers)
         for block in self.blocks:
-            nn.init.normal_(block.attn.o_proj.weight, mean=0.0, std=residual_std)
-            nn.init.normal_(block.mlp.down_proj.weight, mean=0.0, std=residual_std)
+            nn.init.normal_(
+                block.attn.o_proj.weight, mean=0.0, std=residual_std
+            )
+            nn.init.normal_(
+                block.mlp.down_proj.weight, mean=0.0, std=residual_std
+            )
 
     @staticmethod
     def _init_weights(module: nn.Module) -> None:
@@ -128,15 +215,18 @@ class FableLM(nn.Module):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def num_params(self) -> int:
-        # parameters() deduplicates shared tensors, so tied weights count once.
-        return sum(p.numel() for p in self.parameters())
+        return sum(parameter.numel() for parameter in self.parameters())
 
     def forward(self, idx: torch.Tensor) -> torch.Tensor:
         if idx.size(1) > self.config.context:
             raise ValueError(
-                f"sequence length {idx.size(1)} exceeds context {self.config.context}"
+                f"sequence length {idx.size(1)} exceeds "
+                f"context {self.config.context}"
             )
         x = self.tok_emb(idx)
+        if self.pos_emb is not None:
+            positions = torch.arange(idx.size(1), device=idx.device)
+            x = x + self.pos_emb(positions)
         for block in self.blocks:
             x = block(x, self.rope_cos, self.rope_sin)
         return self.lm_head(self.final_norm(x))
