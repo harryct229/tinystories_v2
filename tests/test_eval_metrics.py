@@ -29,6 +29,15 @@ def test_reference_free_metrics_drops_wordless_fables():
     assert isinstance(m["mean_distinct_1"], float)
 
 
+def test_distinct_2_is_none_when_usable_fables_have_no_bigram():
+    # Two usable but single-word fables: n_usable >= 2, yet the pooled set has
+    # no 2-gram, so distinct_2 is None while Self-BLEU is still defined.
+    m = reference_free_metrics(["Hi.", "Yo."])
+    assert m["n_usable"] == 2
+    assert m["distinct_2"] is None
+    assert isinstance(m["self_bleu"], float)
+
+
 def test_reference_free_metrics_all_none_when_no_usable_fables():
     m = reference_free_metrics(["", "   ", "\n"])
     assert m["n_usable"] == 0

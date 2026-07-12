@@ -112,10 +112,11 @@ def reference_free_metrics(fables: list[str], *,
 
     Wordless generations (an empty body from an early/toy checkpoint) carry no
     lexical signal and are dropped first. A metric undefined for the usable set
-    is None: distinct_2 when no fable has a bigram, self_bleu with fewer than
-    two usable fables, and every metric when nothing is usable. Distinct-1 is
-    the paper's per-Fable mean (mean_distinct_n); distinct_2 is pooled
-    (distinct_n) so short fables don't make it undefined."""
+    is None: distinct_2 when fewer than two usable fables remain or the pooled
+    set has no bigram, self_bleu with fewer than two usable fables, and every
+    metric when nothing is usable. Distinct-1 is the paper's per-Fable mean
+    (mean_distinct_n); distinct_2 is pooled (distinct_n) and reported only when
+    at least two usable fables are present."""
     usable = [f for f in fables if tokenize_words(f)]
     metrics = {
         "n_usable": len(usable),
