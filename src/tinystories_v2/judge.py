@@ -98,21 +98,23 @@ class Judge(Protocol):
         raise NotImplementedError
 
 
-def _normalize(text: str) -> str:
+def normalize_text(text: str) -> str:
+    """Whitespace-collapsed casefold: the seam's notion of candidate equality,
+    shared with the labeling stage's degeneracy check."""
     return " ".join(text.casefold().split())
 
 
 def _validate_candidates(fable_a: str, fable_b: str) -> None:
     if not fable_a.strip() or not fable_b.strip():
         raise ValueError("both candidate Fables must be non-empty")
-    if _normalize(fable_a) == _normalize(fable_b):
+    if normalize_text(fable_a) == normalize_text(fable_b):
         raise ValueError("candidate Fables must differ")
 
 
 def _coverage_score(scaffold: Scaffold, fable: str) -> tuple[int, bytes]:
-    normalized_fable = _normalize(fable)
+    normalized_fable = normalize_text(fable)
     coverage = sum(
-        _normalize(slot_value) in normalized_fable
+        normalize_text(slot_value) in normalized_fable
         for slot_value in astuple(scaffold)
     )
     stable_tie_break = hashlib.sha256(

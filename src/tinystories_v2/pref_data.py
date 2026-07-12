@@ -32,7 +32,7 @@ import hashlib
 from tokenizers import Tokenizer
 
 from tinystories_v2.generate import sample
-from tinystories_v2.judge import Judge, judge_with_order_swap
+from tinystories_v2.judge import Judge, judge_with_order_swap, normalize_text
 from tinystories_v2.model import FableLM
 from tinystories_v2.preferences import PreferencePair
 from tinystories_v2.slot_prompt import END_TOKEN, render_prompt
@@ -92,9 +92,8 @@ def sample_completions(model: FableLM, tokenizer: Tokenizer,
 
 def _degenerate(fable_a: str, fable_b: str) -> bool:
     """True when the Judge could not accept this pair: empty or effectively
-    identical candidates (same normalization the Judge seam validates with)."""
-    normalize = lambda text: " ".join(text.casefold().split())  # noqa: E731
-    a, b = normalize(fable_a), normalize(fable_b)
+    identical candidates (the Judge seam's own candidate normalization)."""
+    a, b = normalize_text(fable_a), normalize_text(fable_b)
     return not a or not b or a == b
 
 
