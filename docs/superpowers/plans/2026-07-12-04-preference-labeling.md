@@ -4,7 +4,7 @@
 
 **Goal:** Build `ts2-pref-data`, the resumable offline stage that samples N completions per pref-split Scaffold from an SFT checkpoint, labels 2–3 pairs per Scaffold with the config-selected Judge through order-swap consistency filtering, and accumulates one growing, schema-valid preference-pair artifact across Colab sessions synced to the Hub.
 
-**Scope note:** Code work only. The real labeling run needs issue 03's real SFT checkpoint on `hf://congthanh991/tinystories-v2-sft`, which does not exist yet (issue 03 is code-complete, run pending). This plan delivers the stage, tests (CPU, fake Judge, fixture data), configs, and the thin Colab notebook so the real run is a one-cell job once the SFT checkpoint lands.
+**Scope note:** Code work only. The real labeling run consumes issue 03's real SFT checkpoint on `hf://congthanh991/tinystories-v2-sft` — which now exists (issue 03's run completed 2026-07-12: `checkpoints/step_000800.pt`, final masked loss 1.083). This plan delivers the stage, tests (CPU, fake Judge, fixture data), configs, and the thin Colab notebook; the real labeling run is a one-cell job as soon as this branch lands.
 
 **Architecture:** One new stage module `src/tinystories_v2/pref_data.py` following the repo's stage convention (one TOML config → artifacts in `out_dir`). It composes existing seams: `generate.sample` (issue 02) for completions, `judge.build_judge` + `judge_with_order_swap` (issue 10) for labeling, `preferences.validate_preference_pair` for the v1 record, `hub.sync_to/fetch_from` for Hub persistence. Kill-safety comes from a per-Scaffold commit protocol: append pairs to `pairs.jsonl` + fsync, then atomically replace `progress.json`; resume truncates any uncommitted trailing lines. Per-Scaffold sampling seeds derive from `(seed, prompt_hash)` so a resumed run is byte-identical to an uninterrupted one.
 
@@ -57,7 +57,9 @@ from tinystories_v2.checkpoint import latest_checkpoint, load_checkpoint
 from tinystories_v2.config import load_config, load_env
 from tinystories_v2.generate import sample
 from tinystories_v2.hub import fetch_file_from, fetch_from, try_sync_to
-from tinystories_v2.judge import Judge, build_judge, judge_with_order_swap
+from tinystories_v2.judge import (
+    Judge, build_judge, judge_with_order_swap, normalize_text,
+)
 from tinystories_v2.model import FableLM, ModelConfig
 from tinystories_v2.preferences import SCHEMA_VERSION, PreferencePair
 from tinystories_v2.slot_prompt import END_TOKEN, SLOT_FIELDS, render_prompt
@@ -219,6 +221,7 @@ git commit -m "feat: pair schedule and per-scaffold seed for preference labeling
 
 **Files:**
 - Modify: `src/tinystories_v2/pref_data.py`
+- Modify: `src/tinystories_v2/judge.py` (promote `_normalize` to public `normalize_text`)
 - Test: `tests/test_pref_data.py`
 
 **Interfaces:**
@@ -324,7 +327,28 @@ Expected: FAIL — `ImportError: cannot import name 'label_scaffold' from 'tinys
 
 - [ ] **Step 3: Implement `sample_completions` and `label_scaffold`**
 
-In `src/tinystories_v2/pref_data.py`, replace the import block
+First, in `src/tinystories_v2/judge.py`, promote the private normalization
+helper so the labeling stage shares it instead of duplicating it (reviewer
+finding, human-approved): replace
+
+```python
+def _normalize(text: str) -> str:
+    return " ".join(text.casefold().split())
+```
+
+with
+
+```python
+def normalize_text(text: str) -> str:
+    """Whitespace-collapsed casefold: the seam's notion of candidate equality,
+    shared with the labeling stage's degeneracy check."""
+    return " ".join(text.casefold().split())
+```
+
+and update its call sites in `_validate_candidates` and `_coverage_score`
+(`_normalize(` → `normalize_text(`).
+
+Then, in `src/tinystories_v2/pref_data.py`, replace the import block
 
 ```python
 import hashlib
@@ -338,7 +362,7 @@ import hashlib
 from tokenizers import Tokenizer
 
 from tinystories_v2.generate import sample
-from tinystories_v2.judge import Judge, judge_with_order_swap
+from tinystories_v2.judge import Judge, judge_with_order_swap, normalize_text
 from tinystories_v2.model import FableLM
 from tinystories_v2.preferences import PreferencePair
 from tinystories_v2.slot_prompt import END_TOKEN, render_prompt
@@ -366,9 +390,8 @@ def sample_completions(model: FableLM, tokenizer: Tokenizer,
 
 def _degenerate(fable_a: str, fable_b: str) -> bool:
     """True when the Judge could not accept this pair: empty or effectively
-    identical candidates (same normalization the Judge seam validates with)."""
-    normalize = lambda text: " ".join(text.casefold().split())  # noqa: E731
-    a, b = normalize(fable_a), normalize(fable_b)
+    identical candidates (the Judge seam's own candidate normalization)."""
+    a, b = normalize_text(fable_a), normalize_text(fable_b)
     return not a or not b or a == b
 
 
@@ -899,7 +922,7 @@ from pathlib import Path
 from tokenizers import Tokenizer
 
 from tinystories_v2.generate import sample
-from tinystories_v2.judge import Judge, judge_with_order_swap
+from tinystories_v2.judge import Judge, judge_with_order_swap, normalize_text
 from tinystories_v2.model import FableLM
 from tinystories_v2.preferences import PreferencePair
 from tinystories_v2.slot_prompt import END_TOKEN, render_prompt
@@ -925,7 +948,9 @@ from tinystories_v2.checkpoint import latest_checkpoint, load_checkpoint
 from tinystories_v2.config import load_config, load_env
 from tinystories_v2.generate import sample
 from tinystories_v2.hub import fetch_file_from, fetch_from, try_sync_to
-from tinystories_v2.judge import Judge, build_judge, judge_with_order_swap
+from tinystories_v2.judge import (
+    Judge, build_judge, judge_with_order_swap, normalize_text,
+)
 from tinystories_v2.model import FableLM, ModelConfig
 from tinystories_v2.preferences import SCHEMA_VERSION, PreferencePair
 from tinystories_v2.slot_prompt import END_TOKEN, SLOT_FIELDS, render_prompt
@@ -1608,7 +1633,7 @@ Status: ready-for-agent
 with
 
 ```
-Status: code-complete — real labeling run blocked on issue 03's real SFT run (needs hf://congthanh991/tinystories-v2-sft)
+Status: code-complete — real labeling run ready (issue 03's SFT checkpoint is on the Hub)
 ```
 
 and tick all six acceptance checkboxes (`- [ ]` → `- [x]`) — each is verified by tests: (1) `test_artifact_is_schema_valid_with_rates_in_manifest`, (2) same test + `test_judge_is_config_selected_and_biased_judge_discards_all`, (3) `test_killed_labeling_resumes_to_identical_artifact`, (4) `test_judge_is_config_selected_and_biased_judge_discards_all`, (5) `test_full_config_pins_design_doc_defaults`, (6) `test_pref_data_notebook_is_thin`.
@@ -1626,7 +1651,7 @@ Note: if PROGRESS.md changed since this plan was written, merge these edits with
 with
 
 ```
-| 04 | Preference labeling stage | 03 ✅code, 10 ✅ | ✅ code complete (real run needs 03's SFT checkpoint) |
+| 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ code complete (real run ready — 03's SFT checkpoint on Hub) |
 ```
 
 2. In the "Now" section, replace
@@ -1642,7 +1667,8 @@ with
 - ✅ **Issue 04 (preference labeling) code complete** — `ts2-pref-data`
   samples N completions per pref Scaffold, labels round-robin pairs through
   the order-swap filter, and accumulates a kill-safe, Hub-synced
-  `pairs.jsonl`. The real labeling run chains on issue 03's real SFT run.
+  `pairs.jsonl`. The real labeling run is ready — issue 03's SFT checkpoint
+  is on the Hub.
 - 🟢 Highest-leverage grabs now: the ready code-work issues **05, 07, 08, 09**.
 ```
 
@@ -1655,7 +1681,8 @@ with
   append+fsync/atomic-commit resume protocol (SIGKILL test proves byte-identical
   recovery), single-file Hub fetches for the pref split and tokenizer,
   `configs/pref_data_{fixture,full}.toml`, and a thin
-  `pref_data_colab.ipynb`. Real run waits on issue 03's SFT checkpoint.
+  `pref_data_colab.ipynb`. The real run is ready — issue 03's SFT checkpoint
+  (step_000800, masked loss 1.083) is on the Hub.
 ```
 
 Also update the `_Last updated:` line's date if it differs from the execution date.
