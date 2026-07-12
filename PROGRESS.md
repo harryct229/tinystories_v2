@@ -9,14 +9,16 @@ _Last updated: 2026-07-12_
 
 ## Now
 
-- 🔄 **Real Pretraining run in progress on a VM** (issue 02 — code complete,
-  all acceptance criteria met). Watch the W&B loss curve; checkpoints sync to
-  the Hub.
+- ✅ **Pretraining (issue 02) done — real run complete.** ~29.9M-param FableLM,
+  3800 steps / 498M tokens on Colab L4 (bf16), final loss **1.279** (from 7.71).
+  Model + all data artifacts on private HF Hub under `congthanh991` (see Log).
+  Note: no W&B dashboard this run (the `[track]` extra wasn't installed on the
+  VM) — metrics live in `metrics.jsonl`, synced to the Hub checkpoint repo.
 - ✅ **Issue 03 (SFT stage + demo) code complete** — `ts2-sft` stage,
   `ts2-demo` script, and the thin `sft_colab.ipynb` all landed with tests
-  green. A real SFT run still waits on issue 02's Pretraining checkpoint (in
-  flight on the VM). Unblocks **issue 04** (preference labeling); issue 07
-  (eval) is still blocked on issue 11.
+  green. The real SFT run consumes issue 02's now-published Pretraining
+  checkpoint. Unblocks **issue 04** (preference labeling); issue 07 (eval) is
+  still blocked on issue 11.
 - 🟢 Highest-leverage grabs now: **issue 04** (unblocked by 03), and the
   ready code-work issues **05, 08, 09, 11**.
 
@@ -26,15 +28,15 @@ _Last updated: 2026-07-12_
 |---|-------|-----------|--------|
 | 01 | Walking skeleton (scaffold, fixture, data-prep, tokenizer) | — | ✅ complete |
 | 10 | Judge seam + preference-pair schema | — | ✅ complete |
-| 02 | Model + Pretraining stage | 01 | 🔄 in progress — code done, real run on VM |
+| 02 | Model + Pretraining stage | 01 | ✅ complete — real run done, model on Hub |
 | 11 | Reference-free metrics library | — | 🟢 ready |
 | 12 | Slot Prompt renderer + SFT dataset builder | — | ✅ complete |
-| 05 | Reward Model stage + accuracy gate | 02 ✅code, 10 ✅ | 🟢 ready (code work) |
-| 08 | DPO fallback stage | 02 ✅code, 10 ✅ | 🟢 ready (code work) |
-| 09 | Architecture ablation at 5M scale | 02 ✅code | 🟢 ready |
-| 03 | SFT stage + demo script | 02 ✅code, 12 ✅ | ✅ code complete (real run gated on 02's checkpoint) |
+| 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | 🟢 ready (code work) |
+| 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
+| 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
+| 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ code complete (real run ready — 02 checkpoint on Hub) |
 | 04 | Preference labeling stage | 03 ✅code, 10 ✅ | 🟢 ready (code work) |
-| 07 | Evaluation suite | 03, 10 ✅, 11 ⏳ | 🔴 blocked |
+| 07 | Evaluation suite | 03 ✅code, 10 ✅, 11 ⏳ | 🔴 blocked |
 | 06 | GRPO stage | 05, 11 ⏳ | 🔴 blocked |
 
 Production-run gates (beyond code): 05 and 08 need 03's SFT checkpoint and
@@ -46,8 +48,8 @@ accuracy gate (~68% held-out pair accuracy).
 | Week | Planned | Actual |
 |------|---------|--------|
 | W1 | repo skeleton, tokenizer, splits, packed data | ✅ done 2026-07-11 (day 1) |
-| W2 | Pretraining runs | 🔄 started 2026-07-12 — ahead of schedule |
-| W3 | SFT | issue 12 ✅ + SFT (03) code-complete 2026-07-12; real run waits on 02's checkpoint |
+| W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
+| W3 | SFT | issue 12 ✅ + SFT (03) code-complete 2026-07-12; real run uses 02's Hub checkpoint |
 | W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling waits on SFT |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
 | W7–8 | eval suite, 5M ablation, report | — |
@@ -58,9 +60,21 @@ accuracy gate (~68% held-out pair accuracy).
   (masked-loss fine-tune from a Pretraining checkpoint, checkpoint-resume,
   `ts2-sft`), `demo.py` (`ts2-demo`), `configs/sft_{fixture,full}.toml`,
   `notebooks/sft_colab.ipynb`, and tests (batching, stage, kill-resume,
-  `<|end|>` format-learning, demo, notebook). 143 tests green. Real SFT run
-  still gated on issue 02's Pretraining checkpoint (in flight on the VM).
+  `<|end|>` format-learning, demo, notebook). 145 tests green. Whole-branch
+  review applied two fixes: token-weighted grad-accum masked loss, and
+  `--resume` tolerating a missing SFT Hub repo (mirrors 02's `8b77654`).
   Unblocks issue 04.
+- **2026-07-12** — **Issue 02 Pretraining run complete.** ~29.9M FableLM, 3800
+  steps / 498M tokens on Colab L4 (bf16), final loss 1.279 (from 7.71), LR
+  cosine-decayed to its 6e-5 floor; seeded generation produces coherent
+  fable-domain text. Artifacts on private HF Hub (`congthanh991`):
+  `tinystories-v2-pretrain` (checkpoints/manifest/metrics),
+  `tinystories-v2-tokenizer`, `tinystories-v2-packed` (746 MB uint16 binary),
+  `tinystories-v2-data` (four splits). Fixed + pushed `8b77654`: `--resume`
+  now starts fresh instead of crashing when the checkpoint repo doesn't exist.
+  Ops lesson: run training in-kernel (not `nohup`, which lets idle VMs get
+  reaped); L4s preempt ~hourly but `--resume` recovers from the last 400-step
+  Hub checkpoint. Issue 03 (SFT) picks up from here.
 - **2026-07-12** — Issue 12 (Slot Prompt renderer + SFT dataset builder)
   complete and merged to main: render/encode/parse in `slot_prompt.py`, the
   `sft_data` stage + `sft-example-v1` schema, 123 tests green. Unblocks issue
@@ -75,6 +89,9 @@ accuracy gate (~68% held-out pair accuracy).
 
 ## Open questions
 
-- VM replaces Colab Pro as the primary training environment? If yes,
-  `docs/DESIGN.md`'s compute/budget section and the precision defaults
-  (bf16 vs fp16) should be updated to match the VM's GPU.
+- Training runs on Colab (L4, driven by the `colab` CLI), not a dedicated VM.
+  L4 bf16 held ~66k+ tokens/sec; the DESIGN.md compute/budget section is
+  broadly accurate. Enable the `[track]` extra for a W&B dashboard on the next
+  real run if the team wants one (this run used Hub-synced `metrics.jsonl`).
+- L4 sessions get preempted ~hourly on this account — a real SFT/RM/GRPO run
+  must checkpoint frequently and rely on `--resume` (already the contract).
