@@ -37,7 +37,7 @@ _Last updated: 2026-07-12_
   the order-swap filter, and accumulates a kill-safe, Hub-synced
   `pairs.jsonl`. The real labeling run is ready — issue 03's SFT checkpoint
   is on the Hub.
-- 🟢 Highest-leverage grabs now: the ready code-work issues **05, 07, 08, 09**.
+- 🟢 Highest-leverage grabs now: the ready code-work issues **06, 08, 09**.
 
 ## Issue board
 
@@ -53,7 +53,7 @@ _Last updated: 2026-07-12_
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ code complete (real run ready — 03's SFT checkpoint on Hub) |
-| 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | 🟢 ready (code work) |
+| 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | ✅ code complete (real run needs stage checkpoints on Hub) |
 | 06 | GRPO stage | 05 ✅code, 11 ✅ | 🟢 ready (code work) |
 
 Production-run gates (beyond code): 03's SFT checkpoint is now on the Hub; 05
@@ -73,6 +73,20 @@ clear the accuracy gate (~68% held-out pair accuracy).
 
 ## Log
 
+- **2026-07-12** — Issue 07 (evaluation suite) code complete: `eval.py` stage
+  (`ts2-eval`) — order-swapped cross-family win-rates over stage checkpoints,
+  issue 11's reference-free metrics + held-out perplexity per stage, and a
+  report-pastable sample sheet, writing `results.json` (schema:
+  `docs/schemas/eval-results-v1.md`) + `report.md`. Generation feeds every
+  stage identical Scaffolds/seeds/sampling (asserted); the eval Judge is
+  config-selected via the issue 10 interface (Llama-3.1-8B-Instruct for real
+  runs, never the Qwen reward Judge) and its identity is recorded in the
+  artifact. Works with base+SFT alone; the RLAIF column appears when a third
+  `[[stages]]` block is configured. `configs/eval_{fixture,full}.toml`, the
+  one-command `scripts/eval_colab.py` bootstrap, and a thin `eval_colab.ipynb`
+  landed with tests green (win-rate/metric/report/generate units, a CPU stage
+  test on toy checkpoints with the fake Judge, bootstrap orchestration, and
+  notebook thinness).
 - **2026-07-12** — Issue 05 (Reward Model stage + accuracy gate) code complete:
   `reward_model.py` (FableLM backbone + scalar head, last-real-token scoring,
   hand-written Bradley-Terry loss), `reward.py` stage (`ts2-reward`, deterministic
