@@ -39,7 +39,9 @@ kind = "transformers_margin"
 model_id = "Qwen/Qwen3-8B"
 precision = "fp16"
 device = "cuda"
-margin_threshold = 1.0   # placeholder until the calibration run pins it
+# Calibrated 2026-07-12 vs thinking-mode ground truth (25 real pairs, 8
+# decided): margin sign agreed 8/8 incl. |m|=0.52; tau=0.5 keeps ~76%.
+margin_threshold = 0.5
 
 [hub]
 target = "hf://congthanh991/tinystories-v2-pref-pairs"
