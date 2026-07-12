@@ -2,6 +2,7 @@
 seeding, completion sampling, order-swap pair labeling, and the kill-safe
 progress store."""
 
+import json
 import pytest
 import torch
 from tokenizers import Tokenizer
@@ -13,7 +14,12 @@ from tinystories_v2.pref_data import (
     pair_indices,
     sample_completions,
     scaffold_seed,
+    Progress,
+    commit_scaffold,
+    load_progress,
 )
+from tinystories_v2.preferences import VerdictMetadata, validate_preference_pair
+from tinystories_v2.preferences import PreferencePair
 from tinystories_v2.slots import Scaffold
 from tinystories_v2.tokenizer import run as tokenizer_run
 
@@ -124,3 +130,55 @@ def test_label_scaffold_skips_empty_completions(toy_scaffold):
     assert pairs == []
     assert counters == {"kept": 0, "discarded_inconsistent": 0,
                         "skipped_degenerate": 3}
+
+
+def make_pair(tag: str) -> PreferencePair:
+    return PreferencePair(
+        scaffold=Scaffold(character="fox", trait="greedy",
+                          setting="a dense forest",
+                          conflict="loses food to a trick",
+                          resolution="the trickster is exposed",
+                          moral="honesty is the best policy"),
+        chosen=f"The fox learned honesty ({tag}).",
+        rejected=f"A fox went home ({tag}).",
+        verdict=VerdictMetadata(judge_id="fake:slot-coverage-v1",
+                                first_pass="A", swapped_pass="B",
+                                consistent=True),
+    )
+
+
+def test_commit_and_reload_round_trip(tmp_path):
+    progress = load_progress(tmp_path)
+    assert progress == Progress()
+    commit_scaffold(tmp_path, progress, "hash-1", [make_pair("one")],
+                    {"kept": 1})
+    commit_scaffold(tmp_path, progress, "hash-2", [],
+                    {"skipped_degenerate": 3})
+    reloaded = load_progress(tmp_path)
+    assert reloaded == Progress(pairs_written=1, done=["hash-1", "hash-2"],
+                                counters={"kept": 1, "skipped_degenerate": 3})
+    lines = (tmp_path / "pairs.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    validate_preference_pair(json.loads(lines[0]))
+
+
+def test_load_truncates_uncommitted_trailing_lines(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "hash-1", [make_pair("one")],
+                    {"kept": 1})
+    with (tmp_path / "pairs.jsonl").open("a", encoding="utf-8") as f:
+        f.write('{"uncommitted": ')   # crash mid-append, before the commit
+    reloaded = load_progress(tmp_path)
+    assert reloaded.pairs_written == 1
+    lines = (tmp_path / "pairs.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    validate_preference_pair(json.loads(lines[0]))
+
+
+def test_load_rejects_missing_committed_pairs(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "hash-1", [make_pair("one")],
+                    {"kept": 1})
+    (tmp_path / "pairs.jsonl").unlink()
+    with pytest.raises(ValueError, match="corrupt"):
+        load_progress(tmp_path)

@@ -28,6 +28,10 @@ synced to [hub].target.
 """
 
 import hashlib
+import json
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from tokenizers import Tokenizer
 
@@ -116,3 +120,74 @@ def label_scaffold(judge: Judge, scaffold: Scaffold, completions: list[str],
             counters["kept"] += 1
             pairs.append(pair)
     return pairs, counters
+
+
+@dataclass
+class Progress:
+    """The stage's resume state. pairs_written is the commit point: the number
+    of pairs.jsonl lines that are durably part of the artifact."""
+
+    pairs_written: int = 0
+    done: list[str] = field(default_factory=list)
+    counters: dict[str, int] = field(default_factory=dict)
+
+
+def _truncate_pairs(pairs_path: Path, committed_lines: int) -> None:
+    """Drop uncommitted trailing lines (a crash between append and commit)."""
+    if not pairs_path.exists():
+        if committed_lines:
+            raise ValueError(
+                f"{pairs_path} is missing but progress.json committed "
+                f"{committed_lines} pairs; the artifact is corrupt"
+            )
+        return
+    lines = pairs_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    if len(lines) < committed_lines:
+        raise ValueError(
+            f"{pairs_path} has {len(lines)} lines but progress.json committed "
+            f"{committed_lines}; the artifact is corrupt"
+        )
+    if len(lines) > committed_lines:
+        tmp = pairs_path.with_suffix(".jsonl.tmp")
+        tmp.write_text("".join(lines[:committed_lines]), encoding="utf-8")
+        tmp.replace(pairs_path)
+
+
+def load_progress(out_dir: Path) -> Progress:
+    out_dir = Path(out_dir)
+    progress_path = out_dir / "progress.json"
+    if progress_path.exists():
+        raw = json.loads(progress_path.read_text(encoding="utf-8"))
+        progress = Progress(pairs_written=raw["pairs_written"],
+                            done=list(raw["done"]),
+                            counters=dict(raw["counters"]))
+    else:
+        progress = Progress()
+    _truncate_pairs(out_dir / "pairs.jsonl", progress.pairs_written)
+    return progress
+
+
+def commit_scaffold(out_dir: Path, progress: Progress, prompt_hash: str,
+                    pairs: list[PreferencePair],
+                    counters: dict[str, int]) -> None:
+    """Append this Scaffold's retained pairs, then advance the commit point.
+
+    Order matters for kill-safety: pair lines are appended and fsynced first;
+    the atomic progress.json replace is the commit. A crash in between leaves
+    trailing lines that the next load_progress truncates away."""
+    out_dir = Path(out_dir)
+    with (out_dir / "pairs.jsonl").open("a", encoding="utf-8") as f:
+        for pair in pairs:
+            f.write(json.dumps(pair.to_dict(), ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    progress.pairs_written += len(pairs)
+    progress.done.append(prompt_hash)
+    for key, value in counters.items():
+        progress.counters[key] = progress.counters.get(key, 0) + value
+    payload = json.dumps({"pairs_written": progress.pairs_written,
+                          "done": progress.done,
+                          "counters": progress.counters}, indent=2)
+    tmp = out_dir / "progress.json.tmp"
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(out_dir / "progress.json")
