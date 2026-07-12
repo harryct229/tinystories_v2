@@ -7,10 +7,12 @@ from pathlib import Path
 
 import pytest
 import torch
+from tokenizers import Tokenizer
 
 from tinystories_v2.ablation import run, validate_comparability
 from tinystories_v2.checkpoint import save_checkpoint
 from tinystories_v2.model import FableLM, ModelConfig
+from tinystories_v2.pack import load_packed
 from tinystories_v2.tokenizer import run as run_tokenizer
 
 
@@ -154,12 +156,73 @@ def test_validate_comparability_rejects_parameter_drift():
         )
 
 
+def test_validate_comparability_rejects_duplicate_variant_names():
+    rows = [
+        {"variant": "base", "params": 100, "tokens_seen": 1_000},
+        {"variant": "base", "params": 100, "tokens_seen": 1_000},
+    ]
+    with pytest.raises(ValueError, match="variant names must be unique"):
+        validate_comparability(
+            rows, baseline="base", param_tolerance=0.03
+        )
+
+
+def test_validate_comparability_rejects_missing_baseline():
+    rows = [
+        {"variant": "position", "params": 100, "tokens_seen": 1_000},
+    ]
+    with pytest.raises(ValueError, match="baseline variant 'base' is missing"):
+        validate_comparability(
+            rows, baseline="base", param_tolerance=0.03
+        )
+
+
 def test_run_rejects_equally_incomplete_checkpoints(
     tmp_path, fixture_path, toy_artifacts
 ):
     config = report_config(tmp_path, fixture_path, toy_artifacts)
     config["expected_tokens"] = 512
     with pytest.raises(ValueError, match="completed token budget"):
+        run(config)
+
+
+def test_run_rebuilds_stale_eval_cache_from_configured_inputs(
+    tmp_path, fixture_path, toy_artifacts
+):
+    config = report_config(tmp_path, fixture_path, toy_artifacts)
+    packed_path = Path(config["eval"]["packed_path"])
+    packed_path.parent.mkdir(parents=True)
+    packed_path.write_bytes(b"\x00\x00\x00\x00")
+    Path(str(packed_path) + ".json").write_text(
+        '{"source": "stale"}\n', encoding="utf-8"
+    )
+
+    report = run(config)
+
+    tokenizer = Tokenizer.from_file(config["eval"]["tokenizer_path"])
+    first_record = json.loads(
+        fixture_path.read_text(encoding="utf-8").splitlines()[0]
+    )
+    expected_prefix = tokenizer.encode(first_record["fable"]).ids[:4]
+    rebuilt = load_packed(packed_path)
+    assert report["eval_tokens"] == 128
+    assert len(rebuilt) > 2
+    assert rebuilt[: len(expected_prefix)].tolist() == expected_prefix
+
+
+def test_run_rejects_undersized_rebuilt_eval_split(
+    tmp_path, fixture_path, toy_artifacts
+):
+    record = json.loads(
+        fixture_path.read_text(encoding="utf-8").splitlines()[0]
+    )
+    record["fable"] = "Tiny."
+    split_path = tmp_path / "undersized.jsonl"
+    split_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    config = report_config(tmp_path, fixture_path, toy_artifacts)
+    config["eval"]["split_path"] = str(split_path)
+
+    with pytest.raises(ValueError, match="configured max_tokens"):
         run(config)
 
 

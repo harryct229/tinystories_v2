@@ -93,21 +93,21 @@ def _load_variants(config: dict) -> list[tuple[dict, FableLM]]:
 
 def _load_eval_tokens(eval_config: dict):
     packed_path = Path(eval_config["packed_path"])
-    manifest_path = Path(str(packed_path) + ".json")
-    if not packed_path.exists() or not manifest_path.exists():
-        pack_split(
-            eval_config["split_path"],
-            eval_config["tokenizer_path"],
-            packed_path,
-        )
+    pack_split(
+        eval_config["split_path"],
+        eval_config["tokenizer_path"],
+        packed_path,
+    )
     packed = load_packed(packed_path)
     max_tokens = int(eval_config["max_tokens"])
     if max_tokens < 2:
         raise ValueError("eval max_tokens must be at least 2")
-    count = min(len(packed), max_tokens)
-    if count < 2:
-        raise ValueError("packed eval split must contain at least two tokens")
-    return packed[:count].copy()
+    if len(packed) < max_tokens:
+        raise ValueError(
+            f"rebuilt packed eval split has {len(packed)} tokens; "
+            f"configured max_tokens requires {max_tokens}"
+        )
+    return packed[:max_tokens].copy()
 
 
 def _load_scaffolds(path: str | Path, count: int) -> list[Scaffold]:
