@@ -137,6 +137,18 @@ def test_greedy_sampling_yields_only_degenerate_pairs(tmp_path, prepared,
     assert manifest["counters"]["skipped_degenerate"] > 0
 
 
+def test_short_context_checkpoint_skips_long_prompts(tmp_path, prepared,
+                                                     make_init_checkpoint):
+    tiny = dict(MODEL, context=16)
+    init = make_init_checkpoint(tmp_path / "tiny_init", tiny,
+                                prepared["tokenizer"])
+    out = tmp_path / "out"
+    result = pref_run(make_config(out, prepared, init, max_scaffolds=2))
+    assert result["scaffolds"] == 2
+    assert read_manifest(out)["counters"]["skipped_long_prompt"] == 2
+    assert read_pairs(out) == []
+
+
 def test_max_scaffolds_caps_progress(tmp_path, prepared, init_dir):
     out = tmp_path / "out"
     result = pref_run(make_config(out, prepared, init_dir, max_scaffolds=2))

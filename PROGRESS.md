@@ -59,7 +59,7 @@ clear the accuracy gate (~68% held-out pair accuracy).
 | W1 | repo skeleton, tokenizer, splits, packed data | ✅ done 2026-07-11 (day 1) |
 | W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
 | W3 | SFT | issue 12 ✅ + SFT (03) done 2026-07-12 — real run complete, final loss 1.083, model on Hub |
-| W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling waits on SFT |
+| W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling stage (04) code complete and ready to run |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
 | W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
 

@@ -22,9 +22,11 @@ retained pairs to pairs.jsonl and fsync, then atomically replace
 progress.json. A crash between the two leaves uncommitted trailing lines that
 the next resume truncates before continuing — never a duplicate, never a lost
 pair. Per-Scaffold sampling seeds derive from (seed, prompt_hash), so a
-resumed run reproduces exactly what the uninterrupted run would have written,
-and labeling accumulates across Colab sessions into one growing artifact
-synced to [hub].target.
+resumed run reproduces exactly what the uninterrupted run would have written
+(on the same device type and torch build; resuming on different hardware
+stays valid and duplicate-free, just not byte-identical), and labeling
+accumulates across Colab sessions into one growing artifact synced to
+[hub].target.
 """
 
 import argparse
@@ -44,7 +46,8 @@ from tinystories_v2.config import load_config, load_env
 from tinystories_v2.generate import sample
 from tinystories_v2.hub import fetch_file_from, fetch_from, try_sync_to
 from tinystories_v2.judge import (
-    Judge, build_judge, judge_with_order_swap, normalize_text,
+    Judge, JudgeOutputError, build_judge, judge_with_order_swap,
+    normalize_text,
 )
 from tinystories_v2.model import FableLM, ModelConfig
 from tinystories_v2.preferences import SCHEMA_VERSION, PreferencePair
@@ -116,13 +119,21 @@ def label_scaffold(judge: Judge, scaffold: Scaffold, completions: list[str],
     consistency filtering. Degenerate pairs are skipped before the Judge sees
     them; inconsistent verdicts are discarded (position-bias filter)."""
     pairs: list[PreferencePair] = []
-    counters = {"kept": 0, "discarded_inconsistent": 0, "skipped_degenerate": 0}
+    counters = {"kept": 0, "discarded_inconsistent": 0,
+               "skipped_degenerate": 0, "judge_error": 0}
     for i, j in pair_indices(len(completions), n_pairs):
         fable_a, fable_b = completions[i], completions[j]
         if _degenerate(fable_a, fable_b):
             counters["skipped_degenerate"] += 1
             continue
-        pair = judge_with_order_swap(judge, scaffold, fable_a, fable_b)
+        try:
+            pair = judge_with_order_swap(judge, scaffold, fable_a, fable_b)
+        except JudgeOutputError:
+            # One malformed verdict must not wedge the offline batch: resume
+            # replays the same seed -> same completions -> same greedy Judge
+            # output -> the same crash forever. Count it and move on.
+            counters["judge_error"] += 1
+            continue
         if pair is None:
             counters["discarded_inconsistent"] += 1
         else:
@@ -150,7 +161,15 @@ def _truncate_pairs(pairs_path: Path, committed_lines: int) -> None:
                 f"{committed_lines} pairs; the artifact is corrupt"
             )
         return
-    lines = pairs_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    raw = pairs_path.read_text(encoding="utf-8")
+    # json.dumps escapes "\n" inside records, so "\n" count == record count.
+    # str.splitlines would also split on U+2028/U+2029/U+0085 — which
+    # ensure_ascii=False emits raw — and a miscount here would slice
+    # committed records apart. Split on "\n" only.
+    parts = raw.split("\n")
+    lines = [part + "\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])  # uncommitted partial trailing line
     if len(lines) < committed_lines:
         raise ValueError(
             f"{pairs_path} has {len(lines)} lines but progress.json committed "
@@ -293,8 +312,9 @@ def run(config: dict, resume: bool = False) -> dict:
             "judge_id": judge.judge_id,
             "config": config,
         }
-        (out_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8")
+        tmp = out_dir / "manifest.json.tmp"
+        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        tmp.replace(out_dir / "manifest.json")
 
     done = set(progress.done)
     for row in rows:

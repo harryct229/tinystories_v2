@@ -2,24 +2,29 @@
 seeding, completion sampling, order-swap pair labeling, and the kill-safe
 progress store."""
 
+from dataclasses import dataclass
+
 import json
 import pytest
 import torch
 from tokenizers import Tokenizer
 
-from tinystories_v2.judge import PositionBiasedFakeJudge, SlotCoverageFakeJudge
+from tinystories_v2.judge import (
+    JudgeOutputError, PositionBiasedFakeJudge, SlotCoverageFakeJudge,
+)
 from tinystories_v2.model import FableLM, ModelConfig
 from tinystories_v2.pref_data import (
+    Progress,
+    commit_scaffold,
     label_scaffold,
+    load_progress,
     pair_indices,
     sample_completions,
     scaffold_seed,
-    Progress,
-    commit_scaffold,
-    load_progress,
 )
-from tinystories_v2.preferences import VerdictMetadata, validate_preference_pair
-from tinystories_v2.preferences import PreferencePair
+from tinystories_v2.preferences import (
+    PreferencePair, VerdictMetadata, validate_preference_pair,
+)
 from tinystories_v2.slots import Scaffold
 from tinystories_v2.tokenizer import run as tokenizer_run
 
@@ -108,7 +113,7 @@ def test_label_scaffold_keeps_consistent_pairs_and_counts_degenerate(
     # pair_indices(4, 3) == [(0, 3), (1, 2), (0, 2)]; completion 0 has the
     # highest slot coverage, so it wins both non-degenerate pairs.
     assert counters == {"kept": 2, "discarded_inconsistent": 0,
-                        "skipped_degenerate": 1}
+                        "skipped_degenerate": 1, "judge_error": 0}
     assert [pair.chosen for pair in pairs] == [completions[0], completions[0]]
     assert all(pair.verdict.consistent for pair in pairs)
 
@@ -119,7 +124,7 @@ def test_label_scaffold_discards_all_position_biased_verdicts(toy_scaffold):
         ["Alpha text.", "Beta text.", "Gamma text.", "Delta text."], 3)
     assert pairs == []
     assert counters == {"kept": 0, "discarded_inconsistent": 3,
-                        "skipped_degenerate": 0}
+                        "skipped_degenerate": 0, "judge_error": 0}
 
 
 def test_label_scaffold_skips_empty_completions(toy_scaffold):
@@ -129,7 +134,24 @@ def test_label_scaffold_skips_empty_completions(toy_scaffold):
     # Schedule (0,3), (1,2), (0,2): every pair touches an empty completion.
     assert pairs == []
     assert counters == {"kept": 0, "discarded_inconsistent": 0,
-                        "skipped_degenerate": 3}
+                        "skipped_degenerate": 3, "judge_error": 0}
+
+
+@dataclass(frozen=True)
+class _UnparseableJudge:
+    judge_id: str = "fake:unparseable-v1"
+
+    def compare(self, scaffold, fable_a, fable_b):
+        raise JudgeOutputError("no verdict")
+
+
+def test_label_scaffold_counts_judge_errors_and_continues(toy_scaffold):
+    pairs, counters = label_scaffold(
+        _UnparseableJudge(), toy_scaffold,
+        ["Alpha text.", "Beta text.", "Gamma text.", "Delta text."], 3)
+    assert pairs == []
+    assert counters == {"kept": 0, "discarded_inconsistent": 0,
+                        "skipped_degenerate": 0, "judge_error": 3}
 
 
 def make_pair(tag: str) -> PreferencePair:
@@ -180,5 +202,26 @@ def test_load_rejects_missing_committed_pairs(tmp_path):
     commit_scaffold(tmp_path, progress, "hash-1", [make_pair("one")],
                     {"kept": 1})
     (tmp_path / "pairs.jsonl").unlink()
+    with pytest.raises(ValueError, match="corrupt"):
+        load_progress(tmp_path)
+
+
+def test_load_survives_unicode_line_separator_in_pair_text(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "hash-1",
+                    [make_pair("one two")], {"kept": 1})
+    reloaded = load_progress(tmp_path)
+    assert reloaded.pairs_written == 1
+    raw = (tmp_path / "pairs.jsonl").read_text(encoding="utf-8")
+    records = [line for line in raw.split("\n") if line]
+    assert len(records) == 1
+    assert validate_preference_pair(json.loads(records[0]))
+
+
+def test_load_rejects_fewer_lines_than_committed(tmp_path):
+    progress = load_progress(tmp_path)
+    commit_scaffold(tmp_path, progress, "h1", [make_pair("one")], {"kept": 1})
+    commit_scaffold(tmp_path, progress, "h2", [make_pair("two")], {"kept": 1})
+    (tmp_path / "pairs.jsonl").write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="corrupt"):
         load_progress(tmp_path)

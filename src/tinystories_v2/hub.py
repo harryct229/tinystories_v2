@@ -86,12 +86,14 @@ def fetch_file_from(target: str, relative_path: str, dest: Path) -> None:
     if target.startswith(_HF_PREFIX):
         load_env()
         repo_id = target[len(_HF_PREFIX):]
-        downloaded = huggingface_hub.hf_hub_download(
+        source = Path(huggingface_hub.hf_hub_download(
             repo_id=repo_id, filename=relative_path, repo_type="model"
-        )
-        shutil.copy2(downloaded, dest)
+        ))
     else:
-        shutil.copy2(Path(target) / relative_path, dest)
+        source = Path(target) / relative_path
+    tmp = dest.with_name(dest.name + ".tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(dest)
 
 
 def try_sync_to(target: str, local_dir: Path) -> None:
