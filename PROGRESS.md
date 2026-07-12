@@ -118,3 +118,6 @@ clear the accuracy gate (~68% held-out pair accuracy).
   (the pretrain run used Hub-synced `metrics.jsonl` only).
 - L4 sessions get preempted ~hourly on this account — a real SFT/RM/GRPO run
   must checkpoint frequently and rely on `--resume` (already the contract).
+- Colab run gotchas (CWD/package shadowing, long-exec disconnects, retrying
+  `ConnectionResetError`, idle-VM reaping, Hub-as-source-of-truth) are written
+  up in `docs/colab-notes.md` — read it before the next RM/GRPO run.
