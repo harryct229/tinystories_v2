@@ -32,6 +32,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+from tokenizers import Tokenizer
 
 from tinystories_v2 import __version__
 from tinystories_v2.checkpoint import (
@@ -190,3 +191,146 @@ def evaluate_margin(policy: FableLM, reference: FableLM, holdout: list[dict],
     if was_training:
         policy.train()
     return torch.cat(margins).mean().item()
+
+
+def run(config: dict, resume: bool = False) -> dict:
+    load_env()  # W&B/HF keys before wandb.init or hub sync; never printed
+    train = config["train"]
+    out_dir = Path(config["out_dir"])
+    ckpt_dir = out_dir / "checkpoints"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    hub_target = config.get("hub", {}).get("target")
+    beta = config["dpo"]["beta"]
+
+    tokenizer = Tokenizer.from_file(config["data"]["tokenizer_path"])
+    pairs = load_pairs(config["data"]["pairs_path"])
+    if not pairs:
+        raise ValueError(f"no preference pairs in {config['data']['pairs_path']}")
+    encoded = encode_pairs(tokenizer, pairs)
+    split = config["split"]
+    train_pairs, holdout_pairs = split_pairs(encoded, split["holdout_frac"], split["seed"])
+    if not train_pairs:
+        raise ValueError("no training pairs after the holdout split; lower "
+                         "[split].holdout_frac or add more pairs")
+
+    # -- precision knob: fp32 | bf16 (autocast) | fp16 (autocast + GradScaler)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    precision = train["precision"]
+    amp_dtype = {"fp32": None, "bf16": torch.bfloat16, "fp16": torch.float16}[precision]
+    autocast = (torch.autocast(device_type=device, dtype=amp_dtype)
+                if amp_dtype else nullcontext())
+    scaler = torch.amp.GradScaler(device, enabled=(precision == "fp16"))
+
+    torch.manual_seed(train["seed"])
+    # Policy and frozen reference both start from the fixed SFT checkpoint. The
+    # reference is re-derived here on every run (fresh or resume), never stored
+    # in the DPO checkpoint, so it stays a pure function of [init].
+    sft_state = _load_sft_state(config, device)
+    policy = _build_model(config, sft_state, device)
+    reference = _build_model(config, sft_state, device).requires_grad_(False)
+    reference.eval()
+    optimizer = build_optimizer(policy, train["peak_lr"],
+                                (train["beta1"], train["beta2"]),
+                                train["weight_decay"])
+
+    start_step, pairs_seen = 0, 0
+    if resume:
+        if latest_checkpoint(ckpt_dir) is None and hub_target:
+            try:
+                fetch_from(hub_target, out_dir)  # fresh VM: pull previous session
+            except Exception as err:  # noqa: BLE001 — first run: repo may not exist yet
+                warnings.warn(
+                    f"could not fetch a prior DPO run from {hub_target!r}; "
+                    f"starting fresh: {err}", stacklevel=2)
+        ckpt_path = latest_checkpoint(ckpt_dir)
+        if ckpt_path is not None:
+            state = load_checkpoint(ckpt_path)
+            policy.load_state_dict(state["model"])
+            optimizer.load_state_dict(state["optimizer"])
+            scaler.load_state_dict(state["scaler"])
+            start_step, pairs_seen = state["step"], state["pairs_seen"]
+            print(f"resumed from {ckpt_path.name} at step {start_step}")
+
+    def checkpoint(step: int) -> None:
+        save_checkpoint(ckpt_dir, step, {
+            "step": step, "pairs_seen": pairs_seen,
+            "model": policy.state_dict(), "optimizer": optimizer.state_dict(),
+            "scaler": scaler.state_dict(), "config": config,
+        })
+        prune_checkpoints(ckpt_dir, train.get("keep_last", 0))
+        if hub_target:
+            try_sync_to(hub_target, out_dir)
+
+    logger = MetricsLogger(out_dir, config.get("wandb"))
+    steps, accum = train["steps"], train["grad_accum"]
+    micro_bs, context = train["micro_batch_size"], config["model"]["context"]
+    loss_value, batch_margin = float("nan"), float("nan")
+    policy.train()
+    for step in range(start_step, steps):
+        lr = lr_at(step, steps, train["peak_lr"],
+                   train["warmup_frac"], train["min_lr_frac"])
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        optimizer.zero_grad(set_to_none=True)
+        for micro_step in range(accum):
+            (cx, cy, cm), (rx, ry, rm) = get_pair_batch(
+                train_pairs, micro_bs, context, seed=train["seed"],
+                step=step, micro_step=micro_step, device=device)
+            with autocast:
+                pc = sequence_logprobs(policy(cx), cy, cm)
+                pr = sequence_logprobs(policy(rx), ry, rm)
+                with torch.no_grad():
+                    rc = sequence_logprobs(reference(cx), cy, cm)
+                    rr = sequence_logprobs(reference(rx), ry, rm)
+                loss = dpo_loss(pc, pr, rc, rr, beta)
+            scaler.scale(loss / accum).backward()
+            pairs_seen += micro_bs
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), train["grad_clip"])
+        scaler.step(optimizer)
+        scaler.update()
+        loss_value = loss.item()          # last micro-batch DPO loss
+        batch_margin = implicit_reward_margins(
+            pc.detach(), pr.detach(), rc, rr, beta).mean().item()
+        done = step + 1
+        if done % train["log_every"] == 0:
+            logger.log({"loss": loss_value, "lr": lr, "margin": batch_margin,
+                        "pairs_seen": pairs_seen}, step=done)
+        if done % train["checkpoint_every"] == 0:
+            checkpoint(done)
+    if steps % train["checkpoint_every"] != 0:
+        checkpoint(steps)
+    logger.finish()
+
+    heldout_margin = evaluate_margin(policy, reference, holdout_pairs,
+                                     context, beta, device=device)
+
+    manifest = {
+        "stage": "dpo", "package_version": __version__,
+        "final_step": steps, "final_loss": loss_value,
+        "heldout_margin": heldout_margin, "beta": beta,
+        "pair_split": {"seed": split["seed"], "holdout_frac": split["holdout_frac"],
+                       "n_pairs": len(encoded), "n_train": len(train_pairs),
+                       "n_holdout": len(holdout_pairs)},
+        "pairs_path": config["data"]["pairs_path"], "n_pairs": len(pairs),
+        "config": config,
+    }
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2),
+                                           encoding="utf-8")
+    if hub_target:
+        try_sync_to(hub_target, out_dir)
+    print(f"held-out reward margin: {heldout_margin:.4f} (beta {beta})")
+    return {"step": steps, "loss": loss_value, "heldout_margin": heldout_margin}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="continue from the latest checkpoint in out_dir")
+    args = parser.parse_args(argv)
+    run(load_config(args.config), resume=args.resume)
+
+
+if __name__ == "__main__":
+    main()
