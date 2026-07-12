@@ -1,0 +1,30 @@
+# Issue 09 report: compare only completed, matched-token 5M checkpoints.
+out_dir = "docs/experiments/5m-architecture-ablation"
+baseline = "rope_swiglu"
+param_tolerance = 0.03
+expected_tokens = 498073600
+
+[eval]
+split_path = "artifacts/data_prep_full/splits/eval.jsonl"
+tokenizer_path = "artifacts/tokenizer_full/tokenizer.json"
+packed_path = "artifacts/ablation_5m/eval.bin"
+max_tokens = 1000000
+batch_size = 32
+device = "cuda"
+sample_count = 3
+max_new_tokens = 400
+temperature = 0.8
+top_p = 0.95
+seed = 2026
+
+[[variants]]
+name = "rope_swiglu"
+checkpoint = "artifacts/ablation_5m/rope_swiglu/checkpoints"
+
+[[variants]]
+name = "learned_swiglu"
+checkpoint = "artifacts/ablation_5m/learned_swiglu/checkpoints"
+
+[[variants]]
+name = "rope_gelu"
+checkpoint = "artifacts/ablation_5m/rope_gelu/checkpoints"

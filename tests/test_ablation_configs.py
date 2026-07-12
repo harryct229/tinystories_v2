@@ -113,3 +113,35 @@ def test_tracking_and_artifact_destinations_are_unique():
     ) == 3
     assert len({config["hub"]["target"] for config in configs.values()}) == 3
     assert len({config["out_dir"] for config in configs.values()}) == 3
+
+
+def test_real_report_config_uses_all_variants_and_fixed_eval_slice():
+    path = REPO_ROOT / "configs" / "ablation_5m_report.toml"
+    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert config["out_dir"] == "docs/experiments/5m-architecture-ablation"
+    assert config["baseline"] == "rope_swiglu"
+    assert config["param_tolerance"] == 0.03
+    assert config["expected_tokens"] == 498_073_600
+    assert [variant["name"] for variant in config["variants"]] == [
+        "rope_swiglu",
+        "learned_swiglu",
+        "rope_gelu",
+    ]
+    assert [variant["checkpoint"] for variant in config["variants"]] == [
+        "artifacts/ablation_5m/rope_swiglu/checkpoints",
+        "artifacts/ablation_5m/learned_swiglu/checkpoints",
+        "artifacts/ablation_5m/rope_gelu/checkpoints",
+    ]
+    assert config["eval"] == {
+        "split_path": "artifacts/data_prep_full/splits/eval.jsonl",
+        "tokenizer_path": "artifacts/tokenizer_full/tokenizer.json",
+        "packed_path": "artifacts/ablation_5m/eval.bin",
+        "max_tokens": 1_000_000,
+        "batch_size": 32,
+        "device": "cuda",
+        "sample_count": 3,
+        "max_new_tokens": 400,
+        "temperature": 0.8,
+        "top_p": 0.95,
+        "seed": 2026,
+    }
