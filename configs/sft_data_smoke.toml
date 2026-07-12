@@ -1,0 +1,7 @@
+# Smoke SFT dataset build: a small slice of the real sft split so the wiring
+# smoke is fast (~1k examples). Same tokenizer + split as sft_data_full; only
+# max_examples and out_dir differ. The full run uses configs/sft_data_full.toml.
+out_dir = "artifacts/sft_data_smoke"
+tokenizer = "artifacts/tokenizer_full/tokenizer.json"
+sft_split = "artifacts/data_prep_full/splits/sft.jsonl"
+max_examples = 1000

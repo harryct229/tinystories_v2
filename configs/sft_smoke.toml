@@ -1,0 +1,46 @@
+# Smoke SFT run: validate the real-scale wiring cheaply before the full 800-step
+# run (configs/sft_full.toml). Same real model / init / precision as the full
+# run — only steps, out_dir, data slice, and Hub target differ, so it exercises
+# every real path: pretrain-checkpoint fetch + architecture match, the 8192-vocab
+# tokenizer's special-token ids, masked-loss training with grad_accum, bf16 on
+# L4, and checkpoint sync to (and --resume from) a fresh Hub repo.
+out_dir = "artifacts/sft_smoke"
+
+[model]
+vocab_size = 8192
+d_model = 512
+n_layers = 8
+n_heads = 8
+context = 512
+ffn_hidden = 1408
+
+[data]
+examples_path = "artifacts/sft_data_smoke/examples.jsonl"
+tokenizer_path = "artifacts/tokenizer_full/tokenizer.json"
+
+[init]
+local_dir = "artifacts/pretrain_full"
+hub_source = "hf://congthanh991/tinystories-v2-pretrain"
+
+[train]
+steps = 20
+micro_batch_size = 16
+grad_accum = 8
+peak_lr = 1e-4
+warmup_frac = 0.1
+min_lr_frac = 0.1
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "bf16"
+seed = 1337
+checkpoint_every = 10
+log_every = 1
+keep_last = 2
+
+[wandb]
+enabled = false
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-sft-smoke"
