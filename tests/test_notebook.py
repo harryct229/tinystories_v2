@@ -60,8 +60,10 @@ def test_reward_notebook_is_thin():
     source = "\n".join("".join(c["source"]) for c in code_cells)
     for forbidden in ("def ", "class ", "import torch", "for ", "while "):
         assert forbidden not in source, forbidden
-    assert "ts2-reward" in source
-    assert "--resume" in source
+    # Turnkey: the notebook invokes the one-command bootstrap (which itself
+    # downloads the tokenizer + pairs, then runs ts2-reward --resume) rather
+    # than the stage directly.
+    assert "scripts/reward_colab.py" in source
 
 
 def test_reward_notebook_has_no_secrets_or_outputs():

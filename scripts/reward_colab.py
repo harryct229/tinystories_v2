@@ -20,8 +20,8 @@ Run on the VM (in-kernel, survives disconnects — never nohup-detach):
 
 See docs/colab-notes.md for the CLI gotchas (push main first, .env via upload,
 background + poll long commands, retries, always stop the VM). The preference
-pairs live in issue 04's Hub repo; override with --pairs-repo / --pairs-file if
-it moves.
+pairs live in issue 04's Hub repo (`PAIRS_REPO`); edit `PAIRS_REPO` /
+`PAIRS_FILENAME` in this file if it moves.
 """
 
 import argparse
@@ -32,7 +32,7 @@ from tinystories_v2.config import load_config, load_env
 from tinystories_v2.hub_download import download_file  # noqa: F401 — monkeypatched in tests
 
 TOKENIZER_REPO = "congthanh991/tinystories-v2-tokenizer"
-PAIRS_REPO = "congthanh991/tinystories-v2-pref"   # issue 04's preference artifact
+PAIRS_REPO = "congthanh991/tinystories-v2-pref-pairs"   # issue 04's preference artifact
 PAIRS_FILENAME = "pairs.jsonl"
 DEFAULT_REWARD_CONFIG = "configs/reward_full.toml"
 

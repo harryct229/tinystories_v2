@@ -241,9 +241,9 @@ def run(config: dict, resume: bool = False) -> dict:
             checkpoint(done)
     if steps % train["checkpoint_every"] != 0:
         checkpoint(steps)
+    logger.finish()
 
     heldout_accuracy = evaluate_accuracy(model, holdout_pairs, device=device)
-    logger.finish()
 
     manifest = {
         "stage": "reward_model", "package_version": __version__,
