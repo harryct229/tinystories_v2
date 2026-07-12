@@ -130,3 +130,63 @@ def get_pair_batch(train: list[dict], micro_batch_size: int, context: int, *,
     rejected = _pad_shifted([train[i]["rejected_ids"] for i in picks],
                             [train[i]["rejected_mask"] for i in picks], context, device)
     return chosen, rejected
+
+
+def _load_sft_state(config: dict, device: str) -> dict:
+    """Load the SFT checkpoint declared in [init], fetching the artifact from the
+    Hub first if the local checkpoint is absent (fresh VM), and validate its
+    architecture matches [model]. Returns the loaded checkpoint state (contains
+    'model'); both the policy and the frozen reference are built from it."""
+    init = config["init"]
+    init_dir = Path(init["local_dir"])
+    init_ckpt_dir = init_dir / "checkpoints"
+    if latest_checkpoint(init_ckpt_dir) is None and init.get("hub_source"):
+        fetch_from(init["hub_source"], init_dir)  # fresh Colab VM: pull SFT
+    init_ckpt = latest_checkpoint(init_ckpt_dir)
+    if init_ckpt is None:
+        raise ValueError(
+            f"no SFT checkpoint under {init_ckpt_dir}; point [init].local_dir "
+            f"(and optionally [init].hub_source) at the SFT artifact")
+    state = load_checkpoint(init_ckpt)
+    if ModelConfig(**state["config"]["model"]) != ModelConfig(**config["model"]):
+        raise ValueError(
+            f"[model] does not match the SFT checkpoint at {init_ckpt}; DPO must "
+            f"fine-tune the SFT architecture")
+    print(f"loaded SFT weights from {init_ckpt}")
+    return state
+
+
+def _build_model(config: dict, state: dict, device: str) -> FableLM:
+    """Build a FableLM from [model] and load the SFT weights (strict)."""
+    model = FableLM(ModelConfig(**config["model"])).to(device)
+    model.load_state_dict(state["model"])
+    return model
+
+
+@torch.no_grad()
+def evaluate_margin(policy: FableLM, reference: FableLM, holdout: list[dict],
+                    context: int, beta: float, *, device: str = "cpu",
+                    batch_size: int = 32) -> float:
+    """Mean held-out implicit-reward margin. > 0 means the policy shifted toward
+    the chosen completions relative to the frozen SFT reference. NaN for an empty
+    holdout. Both models are read in eval mode with no grad."""
+    if not holdout:
+        return float("nan")
+    was_training = policy.training
+    policy.eval()
+    reference.eval()
+    margins = []
+    for start in range(0, len(holdout), batch_size):
+        chunk = holdout[start:start + batch_size]
+        cx, cy, cm = _pad_shifted([p["chosen_ids"] for p in chunk],
+                                  [p["chosen_mask"] for p in chunk], context, device)
+        rx, ry, rm = _pad_shifted([p["rejected_ids"] for p in chunk],
+                                  [p["rejected_mask"] for p in chunk], context, device)
+        pc = sequence_logprobs(policy(cx), cy, cm)
+        pr = sequence_logprobs(policy(rx), ry, rm)
+        rc = sequence_logprobs(reference(cx), cy, cm)
+        rr = sequence_logprobs(reference(rx), ry, rm)
+        margins.append(implicit_reward_margins(pc, pr, rc, rr, beta))
+    if was_training:
+        policy.train()
+    return torch.cat(margins).mean().item()
