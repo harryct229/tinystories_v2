@@ -24,8 +24,12 @@ _Last updated: 2026-07-12_
   per-Fable Distinct-n, seeded Self-BLEU, Flesch Reading Ease, and a lazy-Torch
   held-out perplexity helper are merged with CPU-only deterministic tests.
   This unblocks **issue 07** and removes one of issue 06's two blockers.
-- 🟢 Highest-leverage grabs now: **issue 04** (unblocked by 03), and the
-  ready code-work issues **05, 07, 08, 09**.
+- ✅ **Issue 04 (preference labeling) code complete** — `ts2-pref-data`
+  samples N completions per pref Scaffold, labels round-robin pairs through
+  the order-swap filter, and accumulates a kill-safe, Hub-synced
+  `pairs.jsonl`. The real labeling run is ready — issue 03's SFT checkpoint
+  is on the Hub.
+- 🟢 Highest-leverage grabs now: the ready code-work issues **05, 07, 08, 09**.
 
 ## Issue board
 
@@ -40,7 +44,7 @@ _Last updated: 2026-07-12_
 | 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
-| 04 | Preference labeling stage | 03 ✅, 10 ✅ | 🟢 ready — SFT checkpoint on Hub |
+| 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ code complete (real run ready — 03's SFT checkpoint on Hub) |
 | 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | 🟢 ready (code work) |
 | 06 | GRPO stage | 05 ⏳, 11 ✅ | 🔴 blocked on issue 05 |
 
@@ -61,6 +65,14 @@ clear the accuracy gate (~68% held-out pair accuracy).
 
 ## Log
 
+- **2026-07-12** — Issue 04 (preference labeling) code complete:
+  `pref_data.py` stage (`ts2-pref-data`) with per-Scaffold seeded sampling,
+  round-robin pairing, order-swap consistency filtering, a per-Scaffold
+  append+fsync/atomic-commit resume protocol (SIGKILL test proves byte-identical
+  recovery), single-file Hub fetches for the pref split and tokenizer,
+  `configs/pref_data_{fixture,full}.toml`, and a thin
+  `pref_data_colab.ipynb`. The real run is ready — issue 03's SFT checkpoint
+  (step_000800, masked loss 1.083) is on the Hub.
 - **2026-07-12** — **Issue 03 SFT run complete.** Fine-tuned the pretrained
   ~29.9M FableLM for 800 steps on all 50,572 sft-split examples (Colab L4,
   bf16, LR 1e-4 cosine, `grad_accum` 8), final masked loss 1.083 (from ~1.29

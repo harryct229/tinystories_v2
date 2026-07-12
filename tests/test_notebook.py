@@ -48,3 +48,25 @@ def test_sft_notebook_has_no_secrets_or_outputs():
     assert "hf_" not in text
     cells = json.loads(text)["cells"]
     assert all(not c.get("outputs") for c in cells)
+
+
+PREF_NOTEBOOK = Path(__file__).parent.parent / "notebooks" / "pref_data_colab.ipynb"
+
+
+def test_pref_data_notebook_is_thin():
+    cells = json.loads(PREF_NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    code_cells = [c for c in cells if c["cell_type"] == "code"]
+    assert 1 <= len(code_cells) <= 4
+    source = "\n".join("".join(c["source"]) for c in code_cells)
+    for forbidden in ("def ", "class ", "import torch", "for ", "while "):
+        assert forbidden not in source, forbidden
+    assert "ts2-pref-data" in source
+    assert "--resume" in source
+    assert "[judge]" in source  # real Judge needs the transformers extra
+
+
+def test_pref_data_notebook_has_no_secrets_or_outputs():
+    text = PREF_NOTEBOOK.read_text(encoding="utf-8")
+    assert "hf_" not in text  # no literal HF token prefixes
+    cells = json.loads(text)["cells"]
+    assert all(not c.get("outputs") for c in cells)
