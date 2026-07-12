@@ -9,13 +9,14 @@ _Last updated: 2026-07-12_
 
 ## Now
 
-- 🔄 **Real Pretraining run in progress on a VM** (issue 02 — code complete,
-  all acceptance criteria met). Watch the W&B loss curve; checkpoints sync to
-  the Hub.
-- 🟢 Highest-leverage grab: **issue 03** (SFT stage + demo) — unblocked now
-  that issue 12 landed; its code needs only issue 02's stage/loop conventions
-  (a real SFT run additionally waits on 02's Pretraining checkpoint). It gates
-  the whole wave-3 chain (04, 07, and downstream).
+- ✅ **Pretraining (issue 02) done — real run complete.** ~29.9M-param FableLM,
+  3800 steps / 498M tokens on Colab L4 (bf16), final loss **1.279** (from 7.71).
+  Model + all data artifacts on private HF Hub under `congthanh991` (see Log).
+  Note: no W&B dashboard this run (the `[track]` extra wasn't installed on the
+  VM) — metrics live in `metrics.jsonl`, synced to the Hub checkpoint repo.
+- 🔄 **Issue 03 (SFT stage + demo) in progress** — being implemented now.
+  Consumes the pretrained checkpoint + issue 12's `sft_data` builder. Gates the
+  whole wave-3 chain (04, 07, and downstream).
 
 ## Issue board
 
@@ -23,13 +24,13 @@ _Last updated: 2026-07-12_
 |---|-------|-----------|--------|
 | 01 | Walking skeleton (scaffold, fixture, data-prep, tokenizer) | — | ✅ complete |
 | 10 | Judge seam + preference-pair schema | — | ✅ complete |
-| 02 | Model + Pretraining stage | 01 | 🔄 in progress — code done, real run on VM |
+| 02 | Model + Pretraining stage | 01 | ✅ complete — real run done, model on Hub |
 | 11 | Reference-free metrics library | — | 🟢 ready |
 | 12 | Slot Prompt renderer + SFT dataset builder | — | ✅ complete |
-| 05 | Reward Model stage + accuracy gate | 02 ✅code, 10 ✅ | 🟢 ready (code work) |
-| 08 | DPO fallback stage | 02 ✅code, 10 ✅ | 🟢 ready (code work) |
-| 09 | Architecture ablation at 5M scale | 02 ✅code | 🟢 ready |
-| 03 | SFT stage + demo script | 02 ✅code, 12 ✅ | 🟢 ready ← **grab this** |
+| 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | 🟢 ready (code work) |
+| 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
+| 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
+| 03 | SFT stage + demo script | 02 ✅, 12 ✅ | 🔄 in progress |
 | 04 | Preference labeling stage | 03, 10 ✅ | 🔴 blocked |
 | 07 | Evaluation suite | 03, 10 ✅, 11 ⏳ | 🔴 blocked |
 | 06 | GRPO stage | 05, 11 ⏳ | 🔴 blocked |
@@ -43,14 +44,25 @@ accuracy gate (~68% held-out pair accuracy).
 | Week | Planned | Actual |
 |------|---------|--------|
 | W1 | repo skeleton, tokenizer, splits, packed data | ✅ done 2026-07-11 (day 1) |
-| W2 | Pretraining runs | 🔄 started 2026-07-12 — ahead of schedule |
-| W3 | SFT | issue 12 ✅ done 2026-07-12; SFT (03) unblocked |
+| W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
+| W3 | SFT | issue 12 ✅; SFT (03) 🔄 in progress 2026-07-12 |
 | W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling waits on SFT |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
 | W7–8 | eval suite, 5M ablation, report | — |
 
 ## Log
 
+- **2026-07-12** — **Issue 02 Pretraining run complete.** ~29.9M FableLM, 3800
+  steps / 498M tokens on Colab L4 (bf16), final loss 1.279 (from 7.71), LR
+  cosine-decayed to its 6e-5 floor; seeded generation produces coherent
+  fable-domain text. Artifacts on private HF Hub (`congthanh991`):
+  `tinystories-v2-pretrain` (checkpoints/manifest/metrics),
+  `tinystories-v2-tokenizer`, `tinystories-v2-packed` (746 MB uint16 binary),
+  `tinystories-v2-data` (four splits). Fixed + pushed `8b77654`: `--resume`
+  now starts fresh instead of crashing when the checkpoint repo doesn't exist.
+  Ops lesson: run training in-kernel (not `nohup`, which lets idle VMs get
+  reaped); L4s preempt ~hourly but `--resume` recovers from the last 400-step
+  Hub checkpoint. Issue 03 (SFT) picks up from here.
 - **2026-07-12** — Issue 12 (Slot Prompt renderer + SFT dataset builder)
   complete and merged to main: render/encode/parse in `slot_prompt.py`, the
   `sft_data` stage + `sft-example-v1` schema, 123 tests green. Unblocks issue
@@ -65,6 +77,9 @@ accuracy gate (~68% held-out pair accuracy).
 
 ## Open questions
 
-- VM replaces Colab Pro as the primary training environment? If yes,
-  `docs/DESIGN.md`'s compute/budget section and the precision defaults
-  (bf16 vs fp16) should be updated to match the VM's GPU.
+- Training runs on Colab (L4, driven by the `colab` CLI), not a dedicated VM.
+  L4 bf16 held ~66k+ tokens/sec; the DESIGN.md compute/budget section is
+  broadly accurate. Enable the `[track]` extra for a W&B dashboard on the next
+  real run if the team wants one (this run used Hub-synced `metrics.jsonl`).
+- L4 sessions get preempted ~hourly on this account — a real SFT/RM/GRPO run
+  must checkpoint frequently and rely on `--resume` (already the contract).
