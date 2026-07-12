@@ -19,6 +19,7 @@ so an interrupted-and-resumed run reproduces the uninterrupted run exactly
 import argparse
 import json
 import math
+import warnings
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -102,7 +103,14 @@ def run(config: dict, resume: bool = False) -> dict:
     start_step, tokens_seen = 0, 0
     if resume:
         if latest_checkpoint(ckpt_dir) is None and hub_target:
-            fetch_from(hub_target, out_dir)  # fresh Colab VM: pull previous session
+            # Fresh Colab VM: pull a previous session's checkpoints. A missing
+            # target repo (or any hub error) just means "nothing to resume" —
+            # start fresh rather than crash on the first-ever run.
+            try:
+                fetch_from(hub_target, out_dir)
+            except Exception as err:  # noqa: BLE001 — resume is best-effort
+                warnings.warn(f"resume fetch from {hub_target!r} failed; "
+                              f"starting fresh: {err}", stacklevel=2)
         ckpt_path = latest_checkpoint(ckpt_dir)
         if ckpt_path is not None:
             state = load_checkpoint(ckpt_path)

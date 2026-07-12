@@ -136,6 +136,24 @@ def test_hub_sync_after_checkpoint(tmp_path, fixture_path, tokenizer_path):
     assert (tmp_path / "mirror" / "metrics.jsonl").exists()
 
 
+def test_resume_with_missing_hub_repo_starts_fresh(tmp_path, fixture_path,
+                                                   tokenizer_path, monkeypatch):
+    # A first-ever --resume against a hub target that doesn't exist: the fetch
+    # raises (here: simulated), and the stage must warn and start from step 0
+    # rather than crash. No network — fetch_from is monkeypatched.
+    def boom(target, local_dir):
+        raise OSError("repo not found")
+
+    monkeypatch.setattr("tinystories_v2.pretrain.fetch_from", boom)
+    config = toy_config(tmp_path, fixture_path, tokenizer_path, steps=2,
+                        checkpoint_every=2)
+    config["hub"] = {"target": str(tmp_path / "mirror")}  # local: sync stays offline
+    with pytest.warns(UserWarning, match="resume fetch"):
+        summary = run(config, resume=True)
+    assert summary["step"] == 2
+    assert (Path(config["out_dir"]) / "checkpoints" / "step_000002.pt").exists()
+
+
 def test_full_config_parses_and_matches_budgeted_model():
     config = tomllib.loads(
         (REPO_ROOT / "configs" / "pretrain_full.toml").read_text(encoding="utf-8")
