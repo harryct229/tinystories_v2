@@ -27,19 +27,28 @@ and labeling accumulates across Colab sessions into one growing artifact
 synced to [hub].target.
 """
 
+import argparse
 import hashlib
 import json
 import os
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import torch
 from tokenizers import Tokenizer
 
+from tinystories_v2 import __version__
+from tinystories_v2.checkpoint import latest_checkpoint, load_checkpoint
+from tinystories_v2.config import load_config, load_env
 from tinystories_v2.generate import sample
-from tinystories_v2.judge import Judge, judge_with_order_swap, normalize_text
-from tinystories_v2.model import FableLM
-from tinystories_v2.preferences import PreferencePair
-from tinystories_v2.slot_prompt import END_TOKEN, render_prompt
+from tinystories_v2.hub import fetch_file_from, fetch_from, try_sync_to
+from tinystories_v2.judge import (
+    Judge, build_judge, judge_with_order_swap, normalize_text,
+)
+from tinystories_v2.model import FableLM, ModelConfig
+from tinystories_v2.preferences import SCHEMA_VERSION, PreferencePair
+from tinystories_v2.slot_prompt import END_TOKEN, SLOT_FIELDS, render_prompt
 from tinystories_v2.slots import Scaffold
 
 
@@ -191,3 +200,148 @@ def commit_scaffold(out_dir: Path, progress: Progress, prompt_hash: str,
     tmp = out_dir / "progress.json.tmp"
     tmp.write_text(payload, encoding="utf-8")
     tmp.replace(out_dir / "progress.json")
+
+
+def _read_split(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _load_sampler(config: dict, device: str) -> tuple[FableLM, Tokenizer]:
+    """Load the SFT (or any FableLM) checkpoint to sample completions from,
+    plus its tokenizer. Fetches missing pieces from the Hub (fresh VM):
+    the checkpoint artifact via [checkpoint].hub_source, the tokenizer via
+    [data].tokenizer_hub_source (the checkpoint's recorded tokenizer_path is
+    a local path that does not exist on a fresh VM)."""
+    ckpt_cfg = config["checkpoint"]
+    local_dir = Path(ckpt_cfg["local_dir"])
+    if (latest_checkpoint(local_dir / "checkpoints") is None
+            and ckpt_cfg.get("hub_source")):
+        fetch_from(ckpt_cfg["hub_source"], local_dir)
+    ckpt_path = latest_checkpoint(local_dir / "checkpoints")
+    if ckpt_path is None:
+        raise ValueError(
+            f"no step_*.pt checkpoint under {local_dir / 'checkpoints'}; "
+            f"point [checkpoint].local_dir (and optionally hub_source) at "
+            f"the SFT artifact"
+        )
+    state = load_checkpoint(ckpt_path)
+    model = FableLM(ModelConfig(**state["config"]["model"]))
+    model.load_state_dict(state["model"])
+
+    data = config["data"]
+    tokenizer_path = Path(
+        data.get("tokenizer") or state["config"]["data"]["tokenizer_path"])
+    if not tokenizer_path.exists() and data.get("tokenizer_hub_source"):
+        fetch_file_from(data["tokenizer_hub_source"], "tokenizer.json",
+                        tokenizer_path)
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    print(f"sampling from checkpoint {ckpt_path}")
+    return model.to(device).eval(), tokenizer
+
+
+def run(config: dict, resume: bool = False) -> dict:
+    load_env()  # HF token for hub sync/fetch — never printed
+    out_dir = Path(config["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = out_dir / "progress.json"
+    hub_target = config.get("hub", {}).get("target")
+
+    # A fresh run over an existing labeling dir would append duplicates into
+    # pairs.jsonl — hours of Judge time silently corrupted. Refuse instead.
+    if not resume and progress_path.exists():
+        raise ValueError(
+            f"{progress_path} already exists; pass --resume to continue that "
+            f"labeling run, or remove {out_dir} to start over"
+        )
+    if resume and not progress_path.exists() and hub_target:
+        try:
+            fetch_from(hub_target, out_dir)  # fresh VM: pull prior sessions
+        except Exception as err:  # noqa: BLE001 — first run: the repo may not exist yet
+            warnings.warn(
+                f"could not fetch a prior labeling run from {hub_target!r}; "
+                f"starting fresh: {err}", stacklevel=2)
+    progress = load_progress(out_dir)
+
+    data = config["data"]
+    split_path = Path(data["pref_split"])
+    if not split_path.exists() and data.get("hub_source"):
+        fetch_file_from(data["hub_source"], "splits/pref.jsonl", split_path)
+    rows = _read_split(split_path)
+    if not rows:
+        raise ValueError(f"no Scaffolds in {split_path}")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model, tokenizer = _load_sampler(config, device)
+    judge = build_judge(config["judge"])
+
+    sampling = config["sampling"]
+    max_scaffolds = config.get("max_scaffolds", 0)
+    sync_every = config.get("sync_every", 25)
+
+    def write_manifest() -> None:
+        kept = progress.counters.get("kept", 0)
+        discarded = progress.counters.get("discarded_inconsistent", 0)
+        manifest = {
+            "stage": "pref_data",
+            "package_version": __version__,
+            "schema_version": SCHEMA_VERSION,  # preference-pair schema
+            "scaffolds_total": len(rows),
+            "scaffolds_done": len(progress.done),
+            "counters": dict(progress.counters),
+            "discard_rate": discarded / max(kept + discarded, 1),
+            "judge_id": judge.judge_id,
+            "config": config,
+        }
+        (out_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8")
+
+    done = set(progress.done)
+    for row in rows:
+        if max_scaffolds and len(progress.done) >= max_scaffolds:
+            break
+        prompt_hash = row["prompt_hash"]
+        if prompt_hash in done:
+            continue
+        scaffold = Scaffold(**{f: row[f] for f in SLOT_FIELDS})
+        prompt_ids = tokenizer.encode(render_prompt(scaffold)).ids
+        if len(prompt_ids) > model.config.context:
+            pairs, counters = [], {"skipped_long_prompt": 1}
+        else:
+            completions = sample_completions(
+                model, tokenizer, scaffold,
+                num_completions=sampling["num_completions"],
+                max_new_tokens=sampling["max_new_tokens"],
+                temperature=sampling["temperature"],
+                top_p=sampling["top_p"],
+                seed=scaffold_seed(sampling["seed"], prompt_hash),
+                device=device,
+            )
+            pairs, counters = label_scaffold(
+                judge, scaffold, completions, sampling["pairs_per_scaffold"])
+        commit_scaffold(out_dir, progress, prompt_hash, pairs, counters)
+        done.add(prompt_hash)
+        write_manifest()
+        print(f"[{len(progress.done)}/{len(rows)}] "
+              f"kept={progress.counters.get('kept', 0)} "
+              f"discarded={progress.counters.get('discarded_inconsistent', 0)}")
+        if hub_target and len(progress.done) % sync_every == 0:
+            try_sync_to(hub_target, out_dir)
+
+    write_manifest()
+    if hub_target:
+        try_sync_to(hub_target, out_dir)
+    return {"scaffolds": len(progress.done), "pairs": progress.pairs_written}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="continue an interrupted labeling run in out_dir")
+    args = parser.parse_args(argv)
+    run(load_config(args.config), resume=args.resume)
+
+
+if __name__ == "__main__":
+    main()
