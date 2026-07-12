@@ -16,7 +16,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    # CPU-only, for the perplexity helper's toy-model tests (issue 11).
+    # >=2.9 is the first release with Python 3.14 wheels (repo venv is 3.14).
+    "torch>=2.9",
+]
 judge = [
     "torch>=2.3",
     "transformers>=4.51.0",
