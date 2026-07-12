@@ -3,12 +3,14 @@ Judges: a schema-valid growing artifact, config-selected Judge, determinism,
 and resume semantics."""
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from tinystories_v2.config import load_config
 from tinystories_v2.data import run as data_run
 from tinystories_v2.pref_data import run as pref_run
 from tinystories_v2.preferences import validate_preference_pair
@@ -208,3 +210,76 @@ def test_cli_entrypoint_runs_standalone(tmp_path, prepared, init_dir):
     assert result.returncode == 0, result.stderr
     assert (out / "pairs.jsonl").exists()
     assert (out / "manifest.json").exists()
+
+
+CONFIG_DIR = Path(__file__).parents[1] / "configs"
+
+
+def test_hub_target_mirrors_artifact_and_fresh_vm_resume_completes(
+        tmp_path, prepared, init_dir):
+    reference = make_config(tmp_path / "ref", prepared, init_dir)
+    pref_run(reference)
+
+    mirror = tmp_path / "mirror"
+    out = tmp_path / "out"
+    config = make_config(out, prepared, init_dir, max_scaffolds=2)
+    config["hub"] = {"target": str(mirror)}
+    pref_run(config)
+    for name in ("pairs.jsonl", "progress.json", "manifest.json"):
+        assert (mirror / name).exists(), name
+
+    shutil.rmtree(out)  # a fresh Colab VM has no local artifact
+    config["max_scaffolds"] = 6
+    pref_run(config, resume=True)  # pulls prior session from the mirror
+    assert (out / "pairs.jsonl").read_bytes() == \
+        (tmp_path / "ref" / "pairs.jsonl").read_bytes()
+    assert (mirror / "pairs.jsonl").read_bytes() == \
+        (tmp_path / "ref" / "pairs.jsonl").read_bytes()
+
+
+def test_missing_split_and_tokenizer_fetched_from_hub_sources(
+        tmp_path, prepared, init_dir):
+    reference = make_config(tmp_path / "ref", prepared, init_dir)
+    pref_run(reference)
+
+    config = make_config(tmp_path / "out", prepared, init_dir)
+    config["data"] = {
+        "pref_split": str(tmp_path / "fetched" / "splits" / "pref.jsonl"),
+        "hub_source": prepared["data_root"],
+        "tokenizer": str(tmp_path / "fetched" / "tokenizer.json"),
+        "tokenizer_hub_source": prepared["tok_root"],
+    }
+    pref_run(config)
+    assert (tmp_path / "out" / "pairs.jsonl").read_bytes() == \
+        (tmp_path / "ref" / "pairs.jsonl").read_bytes()
+
+
+def test_missing_checkpoint_fetched_from_hub_source(tmp_path, prepared,
+                                                    init_dir):
+    config = make_config(tmp_path / "out", prepared, init_dir,
+                         max_scaffolds=2)
+    config["checkpoint"] = {"local_dir": str(tmp_path / "ckpt_local"),
+                            "hub_source": str(init_dir)}
+    result = pref_run(config)
+    assert result["scaffolds"] == 2
+
+
+def test_full_config_pins_design_doc_defaults():
+    config = load_config(CONFIG_DIR / "pref_data_full.toml")
+    assert config["sampling"]["num_completions"] == 4
+    assert config["sampling"]["temperature"] == 1.0
+    assert config["sampling"]["top_p"] == 0.95
+    assert config["sampling"]["pairs_per_scaffold"] == 3
+    assert config["judge"]["kind"] == "transformers"
+    assert config["judge"]["model_id"] == "Qwen/Qwen3-8B"
+    assert config["judge"]["precision"] == "fp16"
+    assert config["hub"]["target"].startswith("hf://")
+    assert config["checkpoint"]["hub_source"].startswith("hf://")
+    assert config["data"]["hub_source"].startswith("hf://")
+    assert config["data"]["tokenizer_hub_source"].startswith("hf://")
+
+
+def test_fixture_config_selects_the_fake_judge():
+    config = load_config(CONFIG_DIR / "pref_data_fixture.toml")
+    assert config["judge"]["kind"] == "fake_slot_coverage"
+    assert config["sampling"]["num_completions"] == 4

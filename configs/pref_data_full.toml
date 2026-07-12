@@ -1,0 +1,41 @@
+# Real preference-labeling run on Colab Pro (design-doc defaults: N=4
+# completions per Scaffold at temperature 1.0 / top-p 0.95, 3 pairs per
+# Scaffold, Qwen3-8B fp16 Judge on the L4 — on a T4 set
+# model_id = "Qwen/Qwen3-4B-Instruct-2507").
+# Prerequisites on the Hub, all fetched automatically on a fresh VM: the
+# issue 03 SFT checkpoint, the pref split, and the tokenizer.
+# Resumable offline batch: rerun with --resume after a preemption and the run
+# continues from progress.json (pulled back from [hub].target); pairs
+# accumulate across sessions into one growing artifact.
+out_dir = "artifacts/pref_data_full"
+max_scaffolds = 0
+sync_every = 25
+
+[data]
+pref_split = "artifacts/data_prep_full/splits/pref.jsonl"
+hub_source = "hf://congthanh991/tinystories-v2-data"
+tokenizer = "artifacts/tokenizer_full/tokenizer.json"
+tokenizer_hub_source = "hf://congthanh991/tinystories-v2-tokenizer"
+
+[checkpoint]
+local_dir = "artifacts/sft_full"
+hub_source = "hf://congthanh991/tinystories-v2-sft"
+
+[sampling]
+num_completions = 4
+pairs_per_scaffold = 3
+temperature = 1.0
+top_p = 0.95
+max_new_tokens = 400
+seed = 1337
+
+[judge]
+kind = "transformers"
+model_id = "Qwen/Qwen3-8B"
+precision = "fp16"
+device = "cuda"
+enable_thinking = false
+max_new_tokens = 4
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-pref-pairs"
