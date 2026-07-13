@@ -59,7 +59,9 @@ beta2 = 0.95
 grad_clip = 1.0
 precision = "bf16"
 seed = 1337
-checkpoint_every = 25      # ~frequent: L4 sessions preempt ~hourly
+checkpoint_every = 10      # aggressive: first Hub sync must land before the
+                           # preemption window; a lost session otherwise
+                           # restarts from step 0 (happened 2026-07-13)
 log_every = 5
 keep_last = 2
 
