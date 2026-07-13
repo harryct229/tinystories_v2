@@ -253,3 +253,36 @@ def make_reward_scorer(reward_model: RewardModel, tokenizer: Tokenizer, device: 
                 scores[i] = value
         return scores
     return score
+
+
+# --- SFT init: policy + frozen reference (both from [init], like dpo.py) -------
+
+def _load_sft_state(config: dict, device: str) -> dict:
+    """Load the SFT checkpoint declared in [init], fetching from the Hub first if
+    the local checkpoint is absent (fresh VM), and validate its architecture
+    matches [model]. The returned state (contains 'model') builds both the policy
+    and the frozen reference."""
+    init = config["init"]
+    init_dir = Path(init["local_dir"])
+    init_ckpt_dir = init_dir / "checkpoints"
+    if latest_checkpoint(init_ckpt_dir) is None and init.get("hub_source"):
+        fetch_from(init["hub_source"], init_dir)  # fresh Colab VM: pull SFT
+    init_ckpt = latest_checkpoint(init_ckpt_dir)
+    if init_ckpt is None:
+        raise ValueError(
+            f"no SFT checkpoint under {init_ckpt_dir}; point [init].local_dir "
+            f"(and optionally [init].hub_source) at the SFT artifact")
+    state = load_checkpoint(init_ckpt)
+    if ModelConfig(**state["config"]["model"]) != ModelConfig(**config["model"]):
+        raise ValueError(
+            f"[model] does not match the SFT checkpoint at {init_ckpt}; GRPO must "
+            f"optimize the SFT architecture")
+    print(f"loaded SFT weights from {init_ckpt}")
+    return state
+
+
+def _build_model(config: dict, state: dict, device: str) -> FableLM:
+    """Build a FableLM from [model] and load the SFT weights (strict)."""
+    model = FableLM(ModelConfig(**config["model"])).to(device)
+    model.load_state_dict(state["model"])
+    return model
