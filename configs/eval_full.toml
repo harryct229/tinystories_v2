@@ -24,10 +24,10 @@ name = "sft"
 local_dir = "artifacts/sft_full"
 hub_source = "hf://congthanh991/tinystories-v2-sft"
 
-# [[stages]]
-# name = "rlaif"
-# local_dir = "artifacts/grpo_full"
-# hub_source = "hf://congthanh991/tinystories-v2-grpo"
+[[stages]]
+name = "rlaif"
+local_dir = "artifacts/grpo_full"
+hub_source = "hf://congthanh991/tinystories-v2-grpo"
 
 # The DPO fallback (issue 08) is a drop-in third model — uncomment to compare it
 # against base/SFT (and GRPO, if that landed) in the same win-rate tables.
