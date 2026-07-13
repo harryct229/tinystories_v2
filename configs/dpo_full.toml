@@ -1,0 +1,56 @@
+# Real DPO fallback run on Colab Pro. bf16 on L4 (preferred); on a T4 fallback
+# set precision = "fp16". DPO fine-tunes the SFT policy directly against a frozen
+# SFT reference on issue 04's preference pairs — the same artifact the Reward
+# Model consumes. beta is the KL strength (0.1, Rafailov et al. 2023; distinct
+# from GRPO's beta ~= 0.03). Prerequisites on Hub/disk: issue 04's pairs +
+# tokenizer_full and the SFT checkpoint. [init].hub_source pulls the SFT artifact
+# if the local copy is absent (fresh VM).
+out_dir = "artifacts/dpo_full"
+
+[model]
+vocab_size = 8192
+d_model = 512
+n_layers = 8
+n_heads = 8
+context = 512
+ffn_hidden = 1408
+
+[data]
+pairs_path = "artifacts/pref_full/pairs.jsonl"   # issue 04 preference artifact
+tokenizer_path = "artifacts/tokenizer_full/tokenizer.json"
+
+[init]
+local_dir = "artifacts/sft_full"
+hub_source = "hf://congthanh991/tinystories-v2-sft"
+
+[split]
+holdout_frac = 0.1
+seed = 20260712
+
+[dpo]
+beta = 0.1
+
+[train]
+steps = 400
+micro_batch_size = 8
+grad_accum = 4
+peak_lr = 5e-6
+warmup_frac = 0.03
+min_lr_frac = 0.1
+weight_decay = 0.0
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "bf16"
+seed = 1337
+checkpoint_every = 50      # ~frequent: L4 sessions preempt ~hourly
+log_every = 10
+keep_last = 2
+
+[wandb]
+enabled = true
+project = "tinystories-v2"
+run_name = "dpo"
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-dpo"
