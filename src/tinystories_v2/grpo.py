@@ -125,3 +125,90 @@ def grpo_loss(logprobs: torch.Tensor, old_logprobs: torch.Tensor,
     policy = clipped_policy_loss(logprobs, old_logprobs, advantages, mask, clip_eps)
     kl = kl_penalty(logprobs, ref_logprobs, mask)
     return policy + kl_beta * kl, policy, kl
+
+
+# --- rollouts, batching, Scaffold loading -------------------------------------
+
+def load_scaffolds(path, tokenizer: Tokenizer, context: int) -> list[Scaffold]:
+    """Read pref-split rows into Scaffolds whose Slot Prompt fits within the
+    context with room to generate. Rows whose render_prompt tokenizes to >=
+    context tokens are dropped (the sampler could not extend them). Mirrors
+    pref_data's per-row length guard."""
+    scaffolds = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            scaffold = Scaffold(**{fld: row[fld] for fld in SLOT_FIELDS})
+            if len(tokenizer.encode(render_prompt(scaffold)).ids) < context:
+                scaffolds.append(scaffold)
+    return scaffolds
+
+
+def get_scaffold_batch(scaffolds: list[Scaffold], prompts_per_step: int, *,
+                       seed: int, step: int) -> list[Scaffold]:
+    """A with-replacement batch of Slot Prompts for one step; a pure function of
+    (seed, step) so a resumed run draws the identical prompts (resume contract)."""
+    generator = torch.Generator()
+    generator.manual_seed((seed * 1_000_003 + step) % 2**63)
+    picks = torch.randint(0, len(scaffolds), (prompts_per_step,),
+                          generator=generator).tolist()
+    return [scaffolds[i] for i in picks]
+
+
+def sample_rollouts(policy: FableLM, tokenizer: Tokenizer, scaffold: Scaffold, *,
+                    group_size: int, max_new_tokens: int, temperature: float,
+                    top_p: float, seed: int,
+                    device: str = "cpu") -> tuple[list[list[int]], int, list[str]]:
+    """Draw group_size rollouts from the policy for one Slot Prompt. Returns
+    (sequences, prompt_len, fable_texts): each sequence is prompt ids + generated
+    ids (truncated at <|end|> when emitted); fable_texts are the decoded fable
+    bodies (prompt + specials excluded). Seeded via generate.sample, so a resumed
+    step reproduces the identical rollouts. Leaves the policy in eval mode — the
+    caller restores train() (dropout is 0, so this is belt-and-braces)."""
+    prompt_ids = tokenizer.encode(render_prompt(scaffold)).ids
+    sequences = sample(
+        policy, prompt_ids, num_samples=group_size, max_new_tokens=max_new_tokens,
+        temperature=temperature, top_p=top_p, seed=seed,
+        end_id=tokenizer.token_to_id(END_TOKEN), device=device)
+    fables = [tokenizer.decode(seq[len(prompt_ids):]).strip() for seq in sequences]
+    return sequences, len(prompt_ids), fables
+
+
+def rollout_batch(sequences: list[list[int]], prompt_lens: list[int],
+                  context: int, device: str) -> tuple[torch.Tensor, ...]:
+    """Right-pad rollouts into next-token (x, y, mask) tensors. Each sequence is
+    truncated to context+1 ids, then shifted: x = seq[:-1], y = seq[1:]. The mask
+    is active over completion targets only — y index t predicts seq[t+1], which
+    is generated once t+1 >= prompt_len, i.e. t >= prompt_len-1 — and 0 over the
+    prompt prefix and right-padding (causal attention makes right-padding safe)."""
+    rows = []
+    for seq, plen in zip(sequences, prompt_lens):
+        seq = seq[:context + 1]
+        x, y = seq[:-1], seq[1:]
+        mask = [1.0 if t >= plen - 1 else 0.0 for t in range(len(y))]
+        rows.append((x, y, mask))
+    width = max(len(x) for x, _, _ in rows)
+    xs, ys, ms = [], [], []
+    for x, y, m in rows:
+        pad = width - len(x)
+        xs.append(x + [0] * pad)
+        ys.append(y + [0] * pad)
+        ms.append(m + [0.0] * pad)
+    return (torch.tensor(xs, dtype=torch.long, device=device),
+            torch.tensor(ys, dtype=torch.long, device=device),
+            torch.tensor(ms, dtype=torch.float, device=device))
+
+
+def safe_self_bleu(fables: list[str]) -> float:
+    """Self-BLEU over rollouts with a diversity-collapse guard: rollouts with no
+    words are dropped, and fewer than two usable rollouts yields NaN (undefined,
+    not an error) so the metric never wedges the training loop."""
+    usable = [f for f in fables if f.strip() and tokenize_words(f)]
+    if len(usable) < 2:
+        return float("nan")
+    try:
+        return self_bleu(usable)
+    except ValueError:
+        return float("nan")
