@@ -305,7 +305,8 @@ def run(config: dict, resume: bool = False, *, reward_fn=None) -> dict:
     if (reward_fn is None and not (reward_dir / "manifest.json").exists()
             and reward_cfg.get("hub_source")):
         fetch_from(reward_cfg["hub_source"], reward_dir)  # fresh VM: pull the RM
-    accuracy = check_reward_gate(reward_dir, reward_cfg.get("gate", DEFAULT_ACCURACY_GATE))
+    gate = reward_cfg.get("gate", DEFAULT_ACCURACY_GATE)
+    accuracy = check_reward_gate(reward_dir, gate)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     data = config["data"]
@@ -425,28 +426,42 @@ def run(config: dict, resume: bool = False, *, reward_fn=None) -> dict:
                         "rollouts_seen": rollouts_seen}, step=done)
         if done % train["checkpoint_every"] == 0:
             checkpoint(done)
-    if steps % train["checkpoint_every"] != 0:
-        checkpoint(steps)
+
+    if start_step < steps:
+        # Fresh work happened this call: write the redundant tail checkpoint
+        # (if the loop didn't already land on one) before the metrics logger
+        # closes.
+        if steps % train["checkpoint_every"] != 0:
+            checkpoint(steps)
     logger.finish()
 
-    manifest = {
-        "stage": "grpo", "package_version": __version__,
-        "final_step": steps, "final_loss": loss_value,
-        "final_reward_mean": reward_mean, "final_kl": kl_value,
-        "reward_gate": {"accuracy": accuracy,
-                        "gate": reward_cfg.get("gate", DEFAULT_ACCURACY_GATE),
-                        "reward_dir": str(reward_dir)},
-        "grpo": {"group_size": group_size, "clip_eps": grpo_cfg["clip_eps"],
-                 "kl_beta": grpo_cfg["kl_beta"], "ppo_epochs": grpo_cfg["ppo_epochs"]},
-        "pref_split": str(pref_split), "n_scaffolds": len(scaffolds),
-        "config": config,
-    }
-    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2),
-                                           encoding="utf-8")
-    if hub_target:
-        try_sync_to(hub_target, out_dir)
-    print(f"final mean reward {reward_mean:.4f}, KL {kl_value:.4f} "
-          f"(gate accuracy {accuracy:.3f})")
+    if start_step < steps:
+        # Publish the manifest from this run's fresh metrics and sync to the Hub.
+        manifest = {
+            "stage": "grpo", "package_version": __version__,
+            "final_step": steps, "final_loss": loss_value,
+            "final_reward_mean": reward_mean, "final_kl": kl_value,
+            "reward_gate": {"accuracy": accuracy, "gate": gate,
+                            "reward_dir": str(reward_dir)},
+            "grpo": {"group_size": group_size, "clip_eps": grpo_cfg["clip_eps"],
+                     "kl_beta": grpo_cfg["kl_beta"], "ppo_epochs": grpo_cfg["ppo_epochs"]},
+            "pref_split": str(pref_split), "n_scaffolds": len(scaffolds),
+            "config": config,
+        }
+        (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2),
+                                               encoding="utf-8")
+        if hub_target:
+            try_sync_to(hub_target, out_dir)
+        print(f"final mean reward {reward_mean:.4f}, KL {kl_value:.4f} "
+              f"(gate accuracy {accuracy:.3f})")
+    else:
+        # Idempotent re-run of an already-completed job (start_step >= steps):
+        # nothing trained this call, so there are no fresh metrics to publish.
+        # Leave the existing manifest/checkpoint/Hub artifact untouched rather
+        # than clobbering them with NaN placeholders.
+        print(f"run already complete at step {start_step} >= {steps}; "
+              f"leaving the existing manifest untouched")
+
     return {"step": steps, "loss": loss_value, "reward_mean": reward_mean,
             "kl": kl_value}
 

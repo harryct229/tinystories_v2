@@ -3,7 +3,8 @@
 # model_id/precision accordingly). Never the Qwen Judge that produced the
 # reward signal (self-preference bias). Order-swapped double judging is applied
 # inside the stage. Stage checkpoints are pulled from the Hub on a fresh VM via
-# each [[stages]].hub_source. Add the RLAIF stage block once issue 06 lands.
+# each [[stages]].hub_source. The RLAIF stage below is wired to the GRPO
+# artifact (artifacts/grpo_full / hf://congthanh991/tinystories-v2-grpo).
 out_dir = "artifacts/eval_full"
 max_eval_scaffolds = 200       # cap so a run finishes within an L4 session
 sample_sheet_k = 8

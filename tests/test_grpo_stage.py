@@ -1,4 +1,5 @@
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -178,6 +179,37 @@ def test_manifest_records_recipe_and_gate(tmp_path, prepared, make_init_checkpoi
     assert manifest["reward_gate"]["gate"] == 0.5
     assert isinstance(manifest["final_reward_mean"], float)
     assert manifest["pref_split"] == prepared["pref_split"]
+
+
+def test_resuming_a_completed_run_does_not_clobber_the_manifest(
+        tmp_path, prepared, make_init_checkpoint):
+    # Whole-branch review fix: run() used to unconditionally re-derive
+    # final_reward_mean/final_loss/final_kl from locals seeded to NaN, then
+    # rewrite manifest.json and push to the Hub even when start_step >= steps
+    # (nothing trained this call). Resuming a finished job must be a no-op that
+    # preserves the real published manifest instead of degrading it to NaN.
+    init = make_init_checkpoint(tmp_path / "init", TOY_MODEL, prepared["tokenizer"])
+    reward_dir = tmp_path / "rm"
+    _write_reward_manifest(reward_dir, 0.75)
+    config = grpo_toy_config(tmp_path / "out", prepared, init, reward_dir,
+                             train={"steps": 4, "prompts_per_step": 2,
+                             "peak_lr": 1e-3, "warmup_frac": 0.1, "min_lr_frac": 0.1,
+                             "weight_decay": 0.0, "beta1": 0.9, "beta2": 0.95,
+                             "grad_clip": 1.0, "precision": "fp32", "seed": 1337,
+                             "checkpoint_every": 4, "log_every": 1, "keep_last": 0})
+    grpo_run(config, reward_fn=_rigged_reward)
+    manifest_path = Path(config["out_dir"]) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    first_reward_mean = manifest["final_reward_mean"]
+    assert not math.isnan(first_reward_mean)
+
+    # Resume a run that is already complete (start_step == steps): the guard
+    # must skip the tail checkpoint/manifest/Hub-sync finalization rather than
+    # overwriting the good manifest with NaN placeholders.
+    grpo_run(config, resume=True, reward_fn=_rigged_reward)
+    manifest_after_resume = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest_after_resume["final_reward_mean"] == first_reward_mean
+    assert not math.isnan(manifest_after_resume["final_reward_mean"])
 
 
 def test_output_checkpoint_is_eval_drop_in(tmp_path, prepared, make_init_checkpoint):
