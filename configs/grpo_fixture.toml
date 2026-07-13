@@ -1,0 +1,56 @@
+# Toy CPU wiring smoke against fixture artifacts — local sanity runs and docs.
+# Assumes an SFT-shaped init checkpoint, a gate-passing Reward Model artifact,
+# and a pref split exist with a matching [model] block. Real runs use
+# configs/grpo_full.toml. Stage behavior is guarded by tests/test_grpo_*.py.
+out_dir = "artifacts/grpo_fixture"
+
+# Must match the SFT checkpoint's architecture (sft_fixture.toml / reward_fixture.toml).
+[model]
+vocab_size = 512
+d_model = 64
+n_layers = 2
+n_heads = 2
+context = 128
+ffn_hidden = 192
+
+[data]
+pref_split = "artifacts/data_prep_fixture/splits/pref.jsonl"
+tokenizer_path = "artifacts/tokenizer_fixture/tokenizer.json"
+
+[init]
+local_dir = "artifacts/sft_fixture"   # contains checkpoints/step_*.pt
+
+[reward]
+local_dir = "artifacts/reward_fixture"   # issue 05 RM artifact (manifest + checkpoint)
+gate = 0.5                               # lenient: a toy RM may not clear 0.68
+
+[grpo]
+group_size = 6
+clip_eps = 0.2
+kl_beta = 0.03
+ppo_epochs = 2
+adv_eps = 1e-6
+
+[sampling]
+max_new_tokens = 16
+temperature = 1.0
+top_p = 1.0
+
+[train]
+steps = 20
+prompts_per_step = 4
+peak_lr = 1e-3
+warmup_frac = 0.1
+min_lr_frac = 0.1
+weight_decay = 0.0
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "fp32"
+seed = 1337
+checkpoint_every = 10
+log_every = 1
+keep_last = 0
+
+[wandb]
+enabled = false

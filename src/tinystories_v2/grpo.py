@@ -286,3 +286,179 @@ def _build_model(config: dict, state: dict, device: str) -> FableLM:
     model = FableLM(ModelConfig(**config["model"])).to(device)
     model.load_state_dict(state["model"])
     return model
+
+
+# --- the stage ----------------------------------------------------------------
+
+def run(config: dict, resume: bool = False, *, reward_fn=None) -> dict:
+    load_env()  # W&B/HF keys before wandb.init or hub sync; never printed
+    train = config["train"]
+    grpo_cfg = config["grpo"]
+    sampling = config["sampling"]
+    out_dir = Path(config["out_dir"])
+    ckpt_dir = out_dir / "checkpoints"
+    hub_target = config.get("hub", {}).get("target")
+
+    # -- gate FIRST (criterion 4): refuse before loading models or making out_dir.
+    reward_cfg = config["reward"]
+    reward_dir = Path(reward_cfg["local_dir"])
+    if (reward_fn is None and not (reward_dir / "manifest.json").exists()
+            and reward_cfg.get("hub_source")):
+        fetch_from(reward_cfg["hub_source"], reward_dir)  # fresh VM: pull the RM
+    accuracy = check_reward_gate(reward_dir, reward_cfg.get("gate", DEFAULT_ACCURACY_GATE))
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data = config["data"]
+    tokenizer_path = Path(data["tokenizer_path"])
+    if not tokenizer_path.exists() and data.get("tokenizer_hub_source"):
+        fetch_file_from(data["tokenizer_hub_source"], "tokenizer.json", tokenizer_path)
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+
+    pref_split = Path(data["pref_split"])
+    if not pref_split.exists() and data.get("hub_source"):
+        fetch_file_from(data["hub_source"], "splits/pref.jsonl", pref_split)
+    context = config["model"]["context"]
+    scaffolds = load_scaffolds(pref_split, tokenizer, context)
+    if not scaffolds:
+        raise ValueError(f"no usable Scaffolds in {pref_split} (all prompts >= "
+                         f"context {context})")
+
+    # -- precision knob: fp32 | bf16 (autocast) | fp16 (autocast + GradScaler)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    precision = train["precision"]
+    amp_dtype = {"fp32": None, "bf16": torch.bfloat16, "fp16": torch.float16}[precision]
+    autocast = (torch.autocast(device_type=device, dtype=amp_dtype)
+                if amp_dtype else nullcontext())
+    scaler = torch.amp.GradScaler(device, enabled=(precision == "fp16"))
+
+    torch.manual_seed(train["seed"])
+    sft_state = _load_sft_state(config, device)
+    policy = _build_model(config, sft_state, device)
+    reference = _build_model(config, sft_state, device).requires_grad_(False)
+    reference.eval()
+    optimizer = build_optimizer(policy, train["peak_lr"],
+                                (train["beta1"], train["beta2"]), train["weight_decay"])
+    if reward_fn is None:
+        reward_model = _load_reward_model(reward_cfg, device)
+        reward_fn = make_reward_scorer(reward_model, tokenizer, device)
+
+    start_step, rollouts_seen = 0, 0
+    if resume:
+        if latest_checkpoint(ckpt_dir) is None and hub_target:
+            try:
+                fetch_from(hub_target, out_dir)  # fresh VM: pull previous session
+            except Exception as err:  # noqa: BLE001 — first run: repo may not exist yet
+                warnings.warn(
+                    f"could not fetch a prior GRPO run from {hub_target!r}; "
+                    f"starting fresh: {err}", stacklevel=2)
+        ckpt_path = latest_checkpoint(ckpt_dir)
+        if ckpt_path is not None:
+            state = load_checkpoint(ckpt_path)
+            policy.load_state_dict(state["model"])
+            optimizer.load_state_dict(state["optimizer"])
+            scaler.load_state_dict(state["scaler"])
+            start_step, rollouts_seen = state["step"], state["rollouts_seen"]
+            print(f"resumed from {ckpt_path.name} at step {start_step}")
+
+    def checkpoint(step: int) -> None:
+        save_checkpoint(ckpt_dir, step, {
+            "step": step, "rollouts_seen": rollouts_seen,
+            "model": policy.state_dict(), "optimizer": optimizer.state_dict(),
+            "scaler": scaler.state_dict(), "config": config,
+        })
+        prune_checkpoints(ckpt_dir, train.get("keep_last", 0))
+        if hub_target:
+            try_sync_to(hub_target, out_dir)
+
+    logger = MetricsLogger(out_dir, config.get("wandb"))
+    steps = train["steps"]
+    prompts_per_step, group_size = train["prompts_per_step"], grpo_cfg["group_size"]
+    seed = train["seed"]
+    loss_value, reward_mean, kl_value = float("nan"), float("nan"), float("nan")
+    for step in range(start_step, steps):
+        lr = lr_at(step, steps, train["peak_lr"], train["warmup_frac"], train["min_lr_frac"])
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+
+        # -- rollout + score: sampling puts the policy in eval; restore train after.
+        batch_scaffolds = get_scaffold_batch(scaffolds, prompts_per_step,
+                                             seed=seed, step=step)
+        seqs, plens, fables, reward_rows = [], [], [], []
+        for prompt_index, scaffold in enumerate(batch_scaffolds):
+            rollout_seed = ((seed * 1_000_003 + step) * 1_009 + prompt_index) % 2**63
+            rollout_seqs, plen, rollout_fables = sample_rollouts(
+                policy, tokenizer, scaffold, group_size=group_size,
+                max_new_tokens=sampling["max_new_tokens"],
+                temperature=sampling["temperature"], top_p=sampling["top_p"],
+                seed=rollout_seed, device=device)
+            seqs += rollout_seqs
+            plens += [plen] * group_size
+            fables += rollout_fables
+            reward_rows.append(reward_fn(scaffold, rollout_fables))
+        rewards = torch.tensor(reward_rows, dtype=torch.float, device=device)  # [P, G]
+        advantages = group_relative_advantages(rewards, grpo_cfg["adv_eps"]).reshape(-1)
+        x, y, mask = rollout_batch(seqs, plens, context, device)
+
+        policy.train()
+        with torch.no_grad(), autocast:
+            old_logprobs = token_logprobs(policy(x), y).detach()
+            ref_logprobs = token_logprobs(reference(x), y).detach()
+        for _ in range(grpo_cfg["ppo_epochs"]):
+            optimizer.zero_grad(set_to_none=True)
+            with autocast:
+                logprobs = token_logprobs(policy(x), y)
+                loss, policy_loss, kl = grpo_loss(
+                    logprobs, old_logprobs, ref_logprobs, advantages, mask,
+                    grpo_cfg["clip_eps"], grpo_cfg["kl_beta"])
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), train["grad_clip"])
+            scaler.step(optimizer)
+            scaler.update()
+        rollouts_seen += prompts_per_step * group_size
+        loss_value, reward_mean, kl_value = loss.item(), rewards.mean().item(), kl.item()
+        done = step + 1
+        if done % train["log_every"] == 0:
+            logger.log({"loss": loss_value, "lr": lr, "reward_mean": reward_mean,
+                        "kl": kl_value, "self_bleu": safe_self_bleu(fables),
+                        "policy_loss": policy_loss.item(),
+                        "rollouts_seen": rollouts_seen}, step=done)
+        if done % train["checkpoint_every"] == 0:
+            checkpoint(done)
+    if steps % train["checkpoint_every"] != 0:
+        checkpoint(steps)
+    logger.finish()
+
+    manifest = {
+        "stage": "grpo", "package_version": __version__,
+        "final_step": steps, "final_loss": loss_value,
+        "final_reward_mean": reward_mean, "final_kl": kl_value,
+        "reward_gate": {"accuracy": accuracy,
+                        "gate": reward_cfg.get("gate", DEFAULT_ACCURACY_GATE),
+                        "reward_dir": str(reward_dir)},
+        "grpo": {"group_size": group_size, "clip_eps": grpo_cfg["clip_eps"],
+                 "kl_beta": grpo_cfg["kl_beta"], "ppo_epochs": grpo_cfg["ppo_epochs"]},
+        "pref_split": str(pref_split), "n_scaffolds": len(scaffolds),
+        "config": config,
+    }
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2),
+                                           encoding="utf-8")
+    if hub_target:
+        try_sync_to(hub_target, out_dir)
+    print(f"final mean reward {reward_mean:.4f}, KL {kl_value:.4f} "
+          f"(gate accuracy {accuracy:.3f})")
+    return {"step": steps, "loss": loss_value, "reward_mean": reward_mean,
+            "kl": kl_value}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="continue from the latest checkpoint in out_dir")
+    args = parser.parse_args(argv)
+    run(load_config(args.config), resume=args.resume)
+
+
+if __name__ == "__main__":
+    main()

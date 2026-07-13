@@ -1,0 +1,68 @@
+# Real GRPO run on Colab Pro. bf16 on L4 (preferred); on a T4 fallback set
+# precision = "fp16". GRPO optimizes the SFT policy against the frozen Reward
+# Model (issue 05) with a KL leash to the frozen SFT reference (ADR-0006).
+# Prerequisites on Hub: issue 03's SFT checkpoint, issue 05's gate-passing
+# Reward Model, the data repo's pref split, and tokenizer_full. [init]/[reward]
+# hub_source pull the SFT + RM artifacts if the local copies are absent (fresh
+# VM). Rollout sampling is the cost driver (no KV cache) — raise prompts_per_step
+# / max_new_tokens only if the L4 has headroom.
+out_dir = "artifacts/grpo_full"
+
+[model]
+vocab_size = 8192
+d_model = 512
+n_layers = 8
+n_heads = 8
+context = 512
+ffn_hidden = 1408
+
+[data]
+pref_split = "artifacts/data_prep_full/splits/pref.jsonl"
+hub_source = "hf://congthanh991/tinystories-v2-data"
+tokenizer_path = "artifacts/tokenizer_full/tokenizer.json"
+tokenizer_hub_source = "hf://congthanh991/tinystories-v2-tokenizer"
+
+[init]
+local_dir = "artifacts/sft_full"
+hub_source = "hf://congthanh991/tinystories-v2-sft"
+
+[reward]
+local_dir = "artifacts/reward_full"
+hub_source = "hf://congthanh991/tinystories-v2-reward"
+gate = 0.68
+
+[grpo]
+group_size = 8
+clip_eps = 0.2
+kl_beta = 0.03
+ppo_epochs = 2
+adv_eps = 1e-6
+
+[sampling]
+max_new_tokens = 256
+temperature = 1.0
+top_p = 0.95
+
+[train]
+steps = 300
+prompts_per_step = 8
+peak_lr = 2e-6
+warmup_frac = 0.03
+min_lr_frac = 0.1
+weight_decay = 0.0
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+precision = "bf16"
+seed = 1337
+checkpoint_every = 25      # ~frequent: L4 sessions preempt ~hourly
+log_every = 5
+keep_last = 2
+
+[wandb]
+enabled = true
+project = "tinystories-v2"
+run_name = "grpo"
+
+[hub]
+target = "hf://congthanh991/tinystories-v2-grpo"

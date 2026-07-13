@@ -40,6 +40,7 @@ ts2-dpo = "tinystories_v2.dpo:main"
 ts2-demo = "tinystories_v2.demo:main"
 ts2-pref-data = "tinystories_v2.pref_data:main"
 ts2-eval = "tinystories_v2.eval:main"
+ts2-grpo = "tinystories_v2.grpo:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
