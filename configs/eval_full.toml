@@ -29,6 +29,13 @@ hub_source = "hf://congthanh991/tinystories-v2-sft"
 # local_dir = "artifacts/grpo_full"
 # hub_source = "hf://congthanh991/tinystories-v2-grpo"
 
+# The DPO fallback (issue 08) is a drop-in third model — uncomment to compare it
+# against base/SFT (and GRPO, if that landed) in the same win-rate tables.
+# [[stages]]
+# name = "dpo"
+# local_dir = "artifacts/dpo_full"
+# hub_source = "hf://congthanh991/tinystories-v2-dpo"
+
 [sampling]
 max_new_tokens = 400
 temperature = 0.8
