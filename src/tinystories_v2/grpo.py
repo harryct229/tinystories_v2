@@ -212,3 +212,44 @@ def safe_self_bleu(fables: list[str]) -> float:
         return self_bleu(usable)
     except ValueError:
         return float("nan")
+
+
+# --- reward seam: frozen Reward Model as the scoring function -----------------
+
+def _load_reward_model(reward_cfg: dict, device: str) -> RewardModel:
+    """Load the frozen Reward Model (issue 05 artifact) that scores rollouts.
+    Fetches the artifact from [reward].hub_source if the local checkpoint is
+    absent (fresh VM). The model is eval() and requires_grad_(False) — it is a
+    fixed reward, never updated by GRPO."""
+    local_dir = Path(reward_cfg["local_dir"])
+    ckpt_dir = local_dir / "checkpoints"
+    if latest_checkpoint(ckpt_dir) is None and reward_cfg.get("hub_source"):
+        fetch_from(reward_cfg["hub_source"], local_dir)  # fresh VM: pull the RM
+    ckpt = latest_checkpoint(ckpt_dir)
+    if ckpt is None:
+        raise ValueError(
+            f"no Reward Model checkpoint under {ckpt_dir}; point [reward].local_dir "
+            f"(and optionally [reward].hub_source) at the issue-05 RM artifact")
+    state = load_checkpoint(ckpt)
+    model = RewardModel(ModelConfig(**state["config"]["model"])).to(device)
+    model.load_state_dict(state["model"])
+    model.eval().requires_grad_(False)
+    print(f"loaded frozen Reward Model from {ckpt}")
+    return model
+
+
+def make_reward_scorer(reward_model: RewardModel, tokenizer: Tokenizer, device: str):
+    """Wrap the Reward Model as the GRPO reward function: score(scaffold, fables)
+    -> [float] over each rendered (Slot Prompt, fable). Empty/whitespace rollouts
+    score 0.0 (render_example rejects an empty body), so a policy that emits
+    <|end|> immediately gets no reward rather than crashing the loop."""
+    def score(scaffold: Scaffold, fables: list[str]) -> list[float]:
+        scores = [0.0] * len(fables)
+        usable = [(i, f) for i, f in enumerate(fables) if f.strip()]
+        if usable:
+            values = score_fables(reward_model, tokenizer,
+                                  [(scaffold, f) for _, f in usable], device=device)
+            for (i, _), value in zip(usable, values):
+                scores[i] = value
+        return scores
+    return score
