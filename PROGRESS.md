@@ -5,7 +5,7 @@ whenever an issue changes state — the issue files in
 `.scratch/tinystories-v2-pipeline/issues/` (their `Status:` lines) are the
 source of truth; this file is the at-a-glance view.
 
-_Last updated: 2026-07-12_
+_Last updated: 2026-07-13_
 
 ## Now
 
@@ -32,12 +32,17 @@ _Last updated: 2026-07-12_
   per-Fable Distinct-n, seeded Self-BLEU, Flesch Reading Ease, and a lazy-Torch
   held-out perplexity helper are merged with CPU-only deterministic tests.
   This unblocks **issue 07** and removes one of issue 06's two blockers.
-- ✅ **Issue 04 (preference labeling) code complete** — `ts2-pref-data`
-  samples N completions per pref Scaffold, labels round-robin pairs through
-  the order-swap filter, and accumulates a kill-safe, Hub-synced
-  `pairs.jsonl`. The real labeling run is ready — issue 03's SFT checkpoint
-  is on the Hub.
-- 🟢 Highest-leverage grabs now: the ready code-work issues **06, 08, 09**.
+- ✅ **Issue 04 (preference labeling) DONE — real labeling run complete.**
+  All 4,053 pref Scaffolds labeled on Colab L4: **8,984 schema-valid pairs**
+  (73.9% keep, 26.1% margin-discard, 0 degenerate, 0 judge errors) on the
+  private Hub (`congthanh991/tinystories-v2-pref-pairs`). The judge was
+  redesigned mid-run: Qwen3-8B's greedy A/B verdicts saturated at 'A'
+  (position prior p≈1.0, 100% order-swap discards), so labeling now uses
+  **logit-margin debiasing** (`transformers_margin`, tau=0.5 calibrated 8/8
+  against thinking-mode ground truth). Unblocks the **real runs of 05 (RM)
+  and 08 (DPO)**.
+- 🟢 Highest-leverage grabs now: **05's real RM run** (checkpoint + labels
+  both on Hub), and the ready code-work issues **06, 08, 09**.
 
 ## Issue board
 
@@ -52,13 +57,14 @@ _Last updated: 2026-07-12_
 | 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
-| 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ code complete (real run ready — 03's SFT checkpoint on Hub) |
+| 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ complete — 8,984 real pairs on Hub (margin judge) |
 | 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | ✅ code complete (real run needs stage checkpoints on Hub) |
 | 06 | GRPO stage | 05 ✅code, 11 ✅ | 🟢 ready (code work) |
 
-Production-run gates (beyond code): 03's SFT checkpoint is now on the Hub; 05
-and 08 still need 04's real labels; 06 additionally needs 05's Reward Model to
-clear the accuracy gate (~68% held-out pair accuracy).
+Production-run gates (beyond code): 03's SFT checkpoint and 04's 8,984 real
+labels are both on the Hub — 05 and 08 real runs are fully unblocked; 06
+additionally needs 05's Reward Model to clear the accuracy gate (~68%
+held-out pair accuracy).
 
 ## Milestones vs plan (`docs/DESIGN.md`)
 
@@ -67,12 +73,28 @@ clear the accuracy gate (~68% held-out pair accuracy).
 | W1 | repo skeleton, tokenizer, splits, packed data | ✅ done 2026-07-11 (day 1) |
 | W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
 | W3 | SFT | issue 12 ✅ + SFT (03) done 2026-07-12 — real run complete, final loss 1.083, model on Hub |
-| W4–5 | Judge labeling, Reward Model + gate | seam (10) already done; labeling stage (04) code complete and ready to run |
+| W4–5 | Judge labeling, Reward Model + gate | labeling (04) ✅ done 2026-07-13 — 8,984 real pairs on Hub; RM (05) code ready, real run next |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
 | W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
 
 ## Log
 
+- **2026-07-13** — **Issue 04 real labeling run complete.** All 4,053 pref
+  Scaffolds → **8,984 schema-valid preference pairs** on the Hub
+  (`tinystories-v2-pref-pairs`): 73.9% kept, 26.1% margin-discarded, 0
+  degenerate, 0 judge errors, single judge_id
+  `transformers-margin:Qwen/Qwen3-8B;precision=fp16;tau=0.5`. The first
+  attempt discarded 100% of pairs — Qwen3-8B's greedy A/B verdict saturates
+  at 'A' (position prior p≈1.0) on same-model completions, and probes showed
+  prompt restructuring, the 4B fallback, and temperature-mixing all fail. Fix:
+  **logit-margin debiasing** (read A/B first-token logits in both orders; the
+  position prior cancels in the half-difference), validated 8/8 against
+  thinking-mode ground truth and calibrated tau=0.5 (~74% keep). Also fixed
+  in flight: `fetch_file_from` falls back to dataset repo type (the data repo
+  is dataset-type). Ops: ~6 preemption cycles survived via the supervised
+  runner (bounded retries + stall watchdog) and Hub-synced resume; ~10 L4-h
+  labeling + ~3 L4-h diagnosis/calibration. Real runs of 05 (RM) and 08 (DPO)
+  are now fully unblocked.
 - **2026-07-12** — Issue 07 (evaluation suite) code complete: `eval.py` stage
   (`ts2-eval`) — order-swapped cross-family win-rates over stage checkpoints,
   issue 11's reference-free metrics + held-out perplexity per stage, and a

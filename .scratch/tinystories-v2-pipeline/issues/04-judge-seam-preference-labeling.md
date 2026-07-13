@@ -1,6 +1,6 @@
 # 04 — Preference labeling stage
 
-Status: code-complete — real labeling run ready (issue 03's SFT checkpoint is on the Hub)
+Status: complete — real run done 2026-07-13: 8,984 pairs on hf://congthanh991/tinystories-v2-pref-pairs (margin judge tau=0.5, 73.9% keep)
 
 ## Parent
 
