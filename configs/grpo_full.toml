@@ -39,7 +39,11 @@ ppo_epochs = 2
 adv_eps = 1e-6
 
 [sampling]
-max_new_tokens = 256
+# 384 lets real fables finish (SFT completions run ~380 tokens; <|end|>
+# early-stops the group) — 256 truncated most rollouts mid-fable, handing the
+# RM out-of-distribution text. Measured L4 budget at 8 prompts x G=8 x 384:
+# ~20-30 s/step -> ~2-2.5 h for 300 steps.
+max_new_tokens = 384
 temperature = 1.0
 top_p = 0.95
 
