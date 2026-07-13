@@ -1,6 +1,6 @@
 # 05 — Reward Model stage + accuracy gate
 
-Status: ready-for-agent
+Status: complete — real run done 2026-07-13: held-out pair accuracy 0.739 clears the ~68% gate; model at hf://congthanh991/tinystories-v2-reward (GRPO green-lit)
 
 ## Parent
 

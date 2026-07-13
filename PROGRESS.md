@@ -20,14 +20,13 @@ _Last updated: 2026-07-13_
   (`congthanh991/tinystories-v2-sft`); `ts2-demo` generates coherent
   Scaffold-conditioned fables (W&B dashboard live this run). Unblocks **issue 04**
   (preference labeling); with issue 11 done, **issue 07** (evaluation) is ready too.
-- ✅ **Issue 05 (Reward Model stage + accuracy gate) code complete** — `ts2-reward`
-  stage (Bradley-Terry loss on the SFT backbone + a scalar head, deterministic
-  held-out split, checkpoint-resume), the shared `gate.check_reward_gate`
-  (~68% default), `configs/reward_{fixture,full}.toml`, the one-command
-  `scripts/reward_colab.py` bootstrap + `reward_colab.ipynb`, and the
-  `reward-model-artifact-v1` schema all landed with tests green. The real run
-  consumes issue 03's SFT checkpoint and issue 04's labeled pairs. Unblocks
-  **issue 06** (GRPO), which enforces the gate at startup.
+- ✅ **Issue 05 (Reward Model + gate) DONE — real run complete, GATE PASSED.**
+  400 steps of Bradley-Terry training on Colab L4 (bf16, LR 1e-5) over issue
+  04's pairs (8,086 train / 898 holdout): final loss 0.146, **held-out pair
+  accuracy 73.9% ≥ the ~68% gate** — **GRPO (issue 06) is green-lit**; the
+  DPO fallback (08) is not gate-required. Model on the private Hub
+  (`congthanh991/tinystories-v2-reward`). Caveat for the report: accuracy is
+  measured on margin-kept pairs (|margin| > 0.5), the discriminable subset.
 - ✅ **Issue 11 (reference-free metrics) complete** — pooled and paper-aligned
   per-Fable Distinct-n, seeded Self-BLEU, Flesch Reading Ease, and a lazy-Torch
   held-out perplexity helper are merged with CPU-only deterministic tests.
@@ -50,8 +49,8 @@ _Last updated: 2026-07-13_
   artifact to issue 05 — no separate labeling path); the output checkpoint is a
   drop-in third model for the eval suite (issue 07). The real run additionally
   needs issue 03's SFT checkpoint and issue 04's labeled pairs.
-- 🟢 Highest-leverage grabs now: **05's real RM run** (checkpoint + labels
-  both on Hub), and the ready code-work issues **06, 09**.
+- 🟢 Highest-leverage grabs now: **issue 06 (GRPO) code work** — its RM gate
+  is already cleared — plus **09** (ablation) and the real runs of 07/08.
 
 ## Issue board
 
@@ -62,18 +61,17 @@ _Last updated: 2026-07-13_
 | 02 | Model + Pretraining stage | 01 | ✅ complete — real run done, model on Hub |
 | 11 | Reference-free metrics library | — | ✅ complete |
 | 12 | Slot Prompt renderer + SFT dataset builder | — | ✅ complete |
-| 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | ✅ code complete (real run needs 03 ckpt + 04 labels) |
-| 08 | DPO fallback stage | 02 ✅, 10 ✅ | ✅ code complete (real run needs 03 ckpt + 04 labels) |
+| 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | ✅ complete — RM on Hub, held-out acc 73.9% (gate ~68% passed) |
+| 08 | DPO fallback stage | 02 ✅, 10 ✅ | ✅ code complete (real run unblocked; not gate-required) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ complete — 8,984 real pairs on Hub (margin judge) |
 | 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | ✅ code complete (real run needs stage checkpoints on Hub) |
-| 06 | GRPO stage | 05 ✅code, 11 ✅ | 🟢 ready (code work) |
+| 06 | GRPO stage | 05 ✅, 11 ✅ | 🟢 ready (code work) — RM gate already cleared |
 
-Production-run gates (beyond code): 03's SFT checkpoint and 04's 8,984 real
-labels are both on the Hub — 05 and 08 real runs are fully unblocked; 06
-additionally needs 05's Reward Model to clear the accuracy gate (~68%
-held-out pair accuracy).
+Production-run gates (beyond code): all cleared for 06 — the SFT checkpoint,
+8,984 labeled pairs, and a gate-passing Reward Model (73.9% ≥ ~68%) are on
+the Hub. 07/08 real runs are likewise fully unblocked.
 
 ## Milestones vs plan (`docs/DESIGN.md`)
 
@@ -82,12 +80,20 @@ held-out pair accuracy).
 | W1 | repo skeleton, tokenizer, splits, packed data | ✅ done 2026-07-11 (day 1) |
 | W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
 | W3 | SFT | issue 12 ✅ + SFT (03) done 2026-07-12 — real run complete, final loss 1.083, model on Hub |
-| W4–5 | Judge labeling, Reward Model + gate | labeling (04) ✅ done 2026-07-13 — 8,984 real pairs on Hub; RM (05) code ready, real run next |
+| W4–5 | Judge labeling, Reward Model + gate | ✅ done 2026-07-13 — 8,984 pairs + RM on Hub, gate passed (73.9% ≥ 68%), a week+ ahead |
 | W5–6 | GRPO (fallback decision point mid-W5) | — |
 | W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
 
 ## Log
 
+- **2026-07-13** — **Issue 05 real Reward Model run complete — GATE PASSED.**
+  400 BT steps on an L4 (bf16, LR 1e-5) over the 8,984 pairs (8,086/898
+  deterministic split, seed 20260712): final loss 0.146, held-out pair
+  accuracy **0.739 ≥ ~0.68 gate**. Artifact on the Hub
+  (`tinystories-v2-reward`: step_000400.pt, manifest, metrics; W&B run
+  `reward`). Single ~35-min session via the supervised-runner pattern.
+  GRPO (06) is green-lit; DPO (08) remains optional insurance. Report
+  caveat: accuracy is measured on margin-kept (discriminable) pairs.
 - **2026-07-13** — Issue 08 (DPO fallback stage) code complete: `dpo.py`
   stage (`ts2-dpo`) — hand-written DPO loss `-log σ(β·[(logπ_c−logπ_r) −
   (logπ_ref_c−logπ_ref_r)])` (β=0.1) over completion log-probs, fine-tuning the
