@@ -139,7 +139,24 @@ def test_killed_dpo_run_resumes_to_identical_final_state(
     killed_at = load_checkpoint(latest_checkpoint(ckpt_dir))["step"]
     assert KILL_AFTER_STEP <= killed_at < STEPS
 
+    # Snapshot the pre-kill checkpoints so we can prove resume continues from
+    # them rather than silently recomputing the prefix from scratch (a
+    # from-scratch rerun would be deterministic and would otherwise pass the
+    # bitwise-equality assertions below for the wrong reason).
+    pre_kill_stats = {
+        p.name: (p.stat().st_mtime_ns, p.stat().st_size)
+        for p in ckpt_dir.glob("step_*.pt")
+    }
+
     dpo_run(interrupted, resume=True)
+
+    for name, (mtime_ns, size) in pre_kill_stats.items():
+        p = ckpt_dir / name
+        assert p.exists(), f"pre-kill checkpoint {name} disappeared after resume"
+        stat = p.stat()
+        assert (stat.st_mtime_ns, stat.st_size) == (mtime_ns, size), (
+            f"pre-kill checkpoint {name} was rewritten — resume recomputed "
+            f"the prefix instead of continuing from it")
 
     final_ref = load_checkpoint(
         latest_checkpoint(Path(reference["out_dir"]) / "checkpoints"))
