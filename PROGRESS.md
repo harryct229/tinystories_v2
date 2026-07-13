@@ -5,7 +5,7 @@ whenever an issue changes state — the issue files in
 `.scratch/tinystories-v2-pipeline/issues/` (their `Status:` lines) are the
 source of truth; this file is the at-a-glance view.
 
-_Last updated: 2026-07-12_
+_Last updated: 2026-07-13_
 
 ## Now
 
@@ -37,7 +37,16 @@ _Last updated: 2026-07-12_
   the order-swap filter, and accumulates a kill-safe, Hub-synced
   `pairs.jsonl`. The real labeling run is ready — issue 03's SFT checkpoint
   is on the Hub.
-- 🟢 Highest-leverage grabs now: the ready code-work issues **06, 08, 09**.
+- ✅ **Issue 08 (DPO fallback stage) code complete** — `ts2-dpo` stage
+  (hand-written DPO loss on the SFT policy against a frozen SFT reference,
+  deterministic held-out split shared with issue 05, checkpoint-resume),
+  `configs/dpo_{fixture,full}.toml`, the one-command `scripts/dpo_colab.py`
+  bootstrap + `dpo_colab.ipynb`, and the `dpo-artifact-v1` schema all landed
+  with tests green (332 passed). Consumes issue 04's preference pairs (identical
+  artifact to issue 05 — no separate labeling path); the output checkpoint is a
+  drop-in third model for the eval suite (issue 07). The real run additionally
+  needs issue 03's SFT checkpoint and issue 04's labeled pairs.
+- 🟢 Highest-leverage grabs now: the ready code-work issues **06, 09**.
 
 ## Issue board
 
@@ -49,7 +58,7 @@ _Last updated: 2026-07-12_
 | 11 | Reference-free metrics library | — | ✅ complete |
 | 12 | Slot Prompt renderer + SFT dataset builder | — | ✅ complete |
 | 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | ✅ code complete (real run needs 03 ckpt + 04 labels) |
-| 08 | DPO fallback stage | 02 ✅, 10 ✅ | 🟢 ready (code work) |
+| 08 | DPO fallback stage | 02 ✅, 10 ✅ | ✅ code complete (real run needs 03 ckpt + 04 labels) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ code complete (real run ready — 03's SFT checkpoint on Hub) |
@@ -73,6 +82,22 @@ clear the accuracy gate (~68% held-out pair accuracy).
 
 ## Log
 
+- **2026-07-13** — Issue 08 (DPO fallback stage) code complete: `dpo.py`
+  stage (`ts2-dpo`) — hand-written DPO loss `-log σ(β·[(logπ_c−logπ_r) −
+  (logπ_ref_c−logπ_ref_r)])` (β=0.1) over completion log-probs, fine-tuning the
+  SFT policy against a frozen SFT reference re-derived from the fixed `[init]`
+  checkpoint (never stored in the DPO checkpoint, so resume stays bitwise). Data
+  path reuses `reward.load_pairs`/`split_pairs` (identical preference-pair
+  artifact as issue 05 — no separate labeling), and the output checkpoint is a
+  plain FableLM that `eval.load_stage_model` loads as a drop-in third model
+  (issue 07). `configs/dpo_{fixture,full}.toml`, `docs/schemas/dpo-artifact-v1.md`,
+  the one-command `scripts/dpo_colab.py` bootstrap, and a thin `dpo_colab.ipynb`
+  landed with tests green (332 passed): direct loss test, toy separable-pair run
+  raising held-out margin > 0 with falling loss, kill-and-resume (bitwise +
+  pre-kill checkpoint immutability), eval drop-in load, bootstrap orchestration,
+  and notebook thinness. Built subagent-driven from
+  `docs/superpowers/plans/2026-07-12-08-dpo-fallback-stage.md`. Real run
+  additionally needs issue 03's SFT checkpoint and issue 04's labeled pairs.
 - **2026-07-12** — Issue 07 (evaluation suite) code complete: `eval.py` stage
   (`ts2-eval`) — order-swapped cross-family win-rates over stage checkpoints,
   issue 11's reference-free metrics + held-out perplexity per stage, and a

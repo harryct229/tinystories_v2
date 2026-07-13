@@ -1,6 +1,6 @@
 # 08 — DPO fallback stage
 
-Status: ready-for-agent
+Status: code-complete
 
 ## Parent
 
@@ -24,12 +24,12 @@ sibling of the other stages — no special-case wiring.
 
 ## Acceptance criteria
 
-- [ ] DPO loss has a direct test: hand-computed loss on a tiny batch with known log-probs matches the implementation
-- [ ] Toy DPO run through the stage entrypoint on fake-Judge preference pairs shifts the policy toward chosen completions (chosen-vs-rejected reward margin increases), on CPU
-- [ ] Consumes the identical preference-pair artifact as issue 05 — no separate labeling path
-- [ ] Kill-and-resume works; metrics stream to W&B when enabled
-- [ ] Output checkpoint is a drop-in third model for the eval suite (issue 07)
-- [ ] Thin Colab notebook exists for the real run
+- [x] DPO loss has a direct test: hand-computed loss on a tiny batch with known log-probs matches the implementation — `tests/test_dpo_loss.py`
+- [x] Toy DPO run through the stage entrypoint on fake-Judge preference pairs shifts the policy toward chosen completions (chosen-vs-rejected reward margin increases), on CPU — `tests/test_dpo_stage.py::test_toy_dpo_shifts_policy_toward_chosen` (held-out margin > 0)
+- [x] Consumes the identical preference-pair artifact as issue 05 — no separate labeling path — reuses `reward.load_pairs`/`split_pairs`; same `preference-pair-v1` schema
+- [x] Kill-and-resume works; metrics stream to W&B when enabled — `tests/test_dpo_resume.py` (bitwise, incl. pre-kill checkpoint immutability); `MetricsLogger` wired
+- [x] Output checkpoint is a drop-in third model for the eval suite (issue 07) — `tests/test_dpo_stage.py::test_output_checkpoint_is_eval_drop_in`; commented `[[stages]]` block in `configs/eval_full.toml`
+- [x] Thin Colab notebook exists for the real run — `notebooks/dpo_colab.ipynb` (+ `scripts/dpo_colab.py` bootstrap)
 
 ## Blocked by
 
