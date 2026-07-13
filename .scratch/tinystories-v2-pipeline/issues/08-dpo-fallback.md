@@ -1,6 +1,6 @@
 # 08 — DPO fallback stage
 
-Status: code-complete
+Status: complete — real run done 2026-07-13: held-out margin 0.515, model at hf://congthanh991/tinystories-v2-dpo
 
 ## Parent
 

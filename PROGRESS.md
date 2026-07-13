@@ -40,17 +40,14 @@ _Last updated: 2026-07-13_
   **logit-margin debiasing** (`transformers_margin`, tau=0.5 calibrated 8/8
   against thinking-mode ground truth). Unblocks the **real runs of 05 (RM)
   and 08 (DPO)**.
-- ✅ **Issue 08 (DPO fallback stage) code complete** — `ts2-dpo` stage
-  (hand-written DPO loss on the SFT policy against a frozen SFT reference,
-  deterministic held-out split shared with issue 05, checkpoint-resume),
-  `configs/dpo_{fixture,full}.toml`, the one-command `scripts/dpo_colab.py`
-  bootstrap + `dpo_colab.ipynb`, and the `dpo-artifact-v1` schema all landed
-  with tests green (332 passed). Consumes issue 04's preference pairs (identical
-  artifact to issue 05 — no separate labeling path); the output checkpoint is a
-  drop-in third model for the eval suite (issue 07). The real run additionally
-  needs issue 03's SFT checkpoint and issue 04's labeled pairs.
+- ✅ **Issue 08 (DPO fallback) DONE — real run complete.** 400 DPO steps
+  (β=0.1, bf16, LR 5e-6) on Colab L4 over issue 04's pairs (same 8,086/898
+  split as the RM): final loss 0.185, **held-out reward margin 0.515** (the
+  policy prefers chosen over rejected). Model on the private Hub
+  (`congthanh991/tinystories-v2-dpo`) — a drop-in third model for the eval
+  suite (07) alongside SFT and, later, GRPO.
 - 🟢 Highest-leverage grabs now: **issue 06 (GRPO) code work** — its RM gate
-  is already cleared — plus **09** (ablation) and the real runs of 07/08.
+  is already cleared — plus **09** (ablation) and the real eval run (07).
 
 ## Issue board
 
@@ -62,7 +59,7 @@ _Last updated: 2026-07-13_
 | 11 | Reference-free metrics library | — | ✅ complete |
 | 12 | Slot Prompt renderer + SFT dataset builder | — | ✅ complete |
 | 05 | Reward Model stage + accuracy gate | 02 ✅, 10 ✅ | ✅ complete — RM on Hub, held-out acc 73.9% (gate ~68% passed) |
-| 08 | DPO fallback stage | 02 ✅, 10 ✅ | ✅ code complete (real run unblocked; not gate-required) |
+| 08 | DPO fallback stage | 02 ✅, 10 ✅ | ✅ complete — DPO model on Hub (held-out margin 0.515) |
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ complete — 8,984 real pairs on Hub (margin judge) |
@@ -86,6 +83,13 @@ the Hub. 07/08 real runs are likewise fully unblocked.
 
 ## Log
 
+- **2026-07-13** — **Issue 08 real DPO run complete.** 400 steps (β=0.1,
+  bf16, LR 5e-6) over the 8,984 pairs (same 8,086/898 deterministic split as
+  the RM, seed 20260712): final DPO loss 0.185, held-out reward margin
+  **0.515**. Artifact on the Hub (`tinystories-v2-dpo`: step_000400.pt,
+  manifest; W&B run `dpo`). Single ~50-min L4 session via the
+  supervised-runner pattern, no preemption. The DPO checkpoint joins SFT as
+  an eval-suite (07) model; GRPO (06) remains the mainline RLAIF path.
 - **2026-07-13** — **Issue 05 real Reward Model run complete — GATE PASSED.**
   400 BT steps on an L4 (bf16, LR 1e-5) over the 8,984 pairs (8,086/898
   deterministic split, seed 20260712): final loss 0.146, held-out pair
