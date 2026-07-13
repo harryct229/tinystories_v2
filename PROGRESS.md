@@ -46,8 +46,16 @@ _Last updated: 2026-07-13_
   policy prefers chosen over rejected). Model on the private Hub
   (`congthanh991/tinystories-v2-dpo`) — a drop-in third model for the eval
   suite (07) alongside SFT and, later, GRPO.
-- 🟢 Highest-leverage grabs now: **issue 06 (GRPO) code work** — its RM gate
-  is already cleared — plus **09** (ablation) and the real eval run (07).
+- ✅ **Issue 06 (GRPO stage) code complete.** Hand-written group-relative PPO
+  loss + KL leash to a frozen SFT reference (ADR-0004/0005/0006), the reward
+  gate enforced before any model loads, the rollout→reward→advantage→update
+  loop, kill-and-resume, an eval-suite drop-in checkpoint, and the turnkey
+  Colab bootstrap — all tests green. The real run needs only the SFT
+  checkpoint (03), the gate-passing Reward Model (05), and the pref split
+  (01) — all three are already on the Hub, so the real run is fully
+  unblocked.
+- 🟢 Highest-leverage grabs now: **the real GRPO run (06)** — fully unblocked
+  — plus **09** (ablation) and the real eval run (07).
 
 ## Issue board
 
@@ -64,7 +72,7 @@ _Last updated: 2026-07-13_
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ complete — 8,984 real pairs on Hub (margin judge) |
 | 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | ✅ code complete (real run needs stage checkpoints on Hub) |
-| 06 | GRPO stage | 05 ✅, 11 ✅ | 🟢 ready (code work) — RM gate already cleared |
+| 06 | GRPO stage | 05 ✅, 11 ✅ | ✅ code complete — real run fully unblocked (SFT/RM/pref split on Hub) |
 
 Production-run gates (beyond code): all cleared for 06 — the SFT checkpoint,
 8,984 labeled pairs, and a gate-passing Reward Model (73.9% ≥ ~68%) are on
@@ -78,11 +86,37 @@ the Hub. 07/08 real runs are likewise fully unblocked.
 | W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
 | W3 | SFT | issue 12 ✅ + SFT (03) done 2026-07-12 — real run complete, final loss 1.083, model on Hub |
 | W4–5 | Judge labeling, Reward Model + gate | ✅ done 2026-07-13 — 8,984 pairs + RM on Hub, gate passed (73.9% ≥ 68%), a week+ ahead |
-| W5–6 | GRPO (fallback decision point mid-W5) | — |
+| W5–6 | GRPO (fallback decision point mid-W5) | issue 06 ✅ code complete 2026-07-13 — real run unblocked (SFT/RM/pref split on Hub); DPO fallback (08) already banked |
 | W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
 
 ## Log
 
+- **2026-07-13** — Issue 06 (GRPO stage) code complete: `grpo.py` stage
+  (`ts2-grpo`) — a hand-written group-relative PPO loss (group-mean baseline,
+  no value network, ADR-0006) with a KL leash to a frozen SFT reference
+  (ADR-0004/0005), enforcing issue 05's accuracy gate before any model or
+  `out_dir` is created. Per step: sample a batch of Slot Prompts from the
+  pref split, draw G rollouts per prompt from the policy, score them with the
+  frozen Reward Model (issue 05), form group-relative advantages, and update
+  the policy with the clipped surrogate + KL penalty; reward/KL/Self-BLEU
+  stream to W&B so reward hacking and diversity collapse are visible early.
+  Kill-and-resume is bitwise-identical (frozen reference and Reward Model are
+  re-derived from their source artifacts, never checkpointed). Output is a
+  plain FableLM checkpoint — a drop-in third model (`rlaif`) for the eval
+  suite (07), loaded by `eval.load_stage_model` exactly like base/SFT.
+  Landed: `configs/grpo_{fixture,full}.toml`,
+  `docs/schemas/grpo-artifact-v1.md`, the one-command `scripts/grpo_colab.py`
+  bootstrap (download tokenizer + pref split, then `ts2-grpo --resume`), a
+  thin `grpo_colab.ipynb`, and the `rlaif` `[[stages]]` block activated in
+  `configs/eval_full.toml`. Full suite green (368 passed): group-relative
+  advantages, clipped policy loss, KL penalty, gate refusal, rigged-reward
+  mean-reward-rises test through the real entrypoint, the fake-Judge→toy-RM→
+  toy-GRPO whole chain, kill-and-resume, bootstrap orchestration, and
+  notebook thinness — all CPU-only, no GPU/network. Built subagent-driven
+  from `docs/superpowers/plans/2026-07-13-06-grpo-stage.md`. The real run
+  additionally needs the SFT checkpoint (issue 03), the gate-passing Reward
+  Model (issue 05), and the pref split (issue 01) — all three already on the
+  Hub, so the real run is fully unblocked.
 - **2026-07-13** — **Issue 08 real DPO run complete.** 400 steps (β=0.1,
   bf16, LR 5e-6) over the 8,984 pairs (same 8,086/898 deterministic split as
   the RM, seed 20260712): final DPO loss 0.185, held-out reward margin
