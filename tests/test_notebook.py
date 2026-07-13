@@ -114,3 +114,26 @@ def test_eval_notebook_has_no_secrets_or_outputs():
     assert "hf_" not in text
     cells = json.loads(text)["cells"]
     assert all(not c.get("outputs") for c in cells)
+
+
+DPO_NOTEBOOK = Path(__file__).parent.parent / "notebooks" / "dpo_colab.ipynb"
+
+
+def test_dpo_notebook_is_thin():
+    cells = json.loads(DPO_NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    code_cells = [c for c in cells if c["cell_type"] == "code"]
+    assert 1 <= len(code_cells) <= 4
+    source = "\n".join("".join(c["source"]) for c in code_cells)
+    for forbidden in ("def ", "class ", "import torch", "for ", "while "):
+        assert forbidden not in source, forbidden
+    # Turnkey: the notebook invokes the one-command bootstrap (which itself
+    # downloads the tokenizer + pairs, then runs ts2-dpo --resume) rather than
+    # the stage directly.
+    assert "scripts/dpo_colab.py" in source
+
+
+def test_dpo_notebook_has_no_secrets_or_outputs():
+    text = DPO_NOTEBOOK.read_text(encoding="utf-8")
+    assert "hf_" not in text
+    cells = json.loads(text)["cells"]
+    assert all(not c.get("outputs") for c in cells)
