@@ -27,6 +27,9 @@ Artifacts in <out_dir>:
 import argparse
 import itertools
 import json
+import os
+import shutil
+import warnings
 from pathlib import Path
 
 import torch
@@ -56,6 +59,47 @@ def _degenerate(fable_a: str, fable_b: str) -> bool:
     return not a or not b or a == b
 
 
+def _read_jsonl_lines(path: Path) -> list[dict]:
+    """Complete JSON lines only: content after the last newline (a torn append
+    from a killed run) is ignored, so resume never trips on a partial write."""
+    if not path.exists():
+        return []
+    raw = path.read_text(encoding="utf-8")
+    complete = raw[: raw.rfind("\n") + 1] if "\n" in raw else ""
+    return [json.loads(line) for line in complete.split("\n") if line]
+
+
+def _completions_path(out_dir: Path, stage: str) -> Path:
+    return Path(out_dir) / "completions" / f"{stage}.jsonl"
+
+
+def _load_cached_fables(out_dir: Path, stage: str,
+                        hashes: list[str]) -> list[str] | None:
+    """The stage's cached completions aligned to hashes, or None when the
+    cache is absent or does not cover every requested Scaffold."""
+    by_hash = {r["prompt_hash"]: r["fable"]
+               for r in _read_jsonl_lines(_completions_path(out_dir, stage))}
+    if all(h in by_hash for h in hashes):
+        return [by_hash[h] for h in hashes]
+    return None
+
+
+def _store_fables(out_dir: Path, stage: str, hashes: list[str],
+                  fables: list[str]) -> None:
+    path = _completions_path(out_dir, stage)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".jsonl.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for prompt_hash, fable in zip(hashes, fables):
+            f.write(json.dumps({"prompt_hash": prompt_hash, "fable": fable},
+                               ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
+def _judgments_path(out_dir: Path, stage_a: str, stage_b: str) -> Path:
+    return Path(out_dir) / "judgments" / f"{stage_a}--{stage_b}.jsonl"
+
+
 def stage_win(judge, scaffold: Scaffold, fable_a: str, fable_b: str) -> str:
     """Order-swapped double judging of two stages' fables for one Scaffold.
 
@@ -73,42 +117,81 @@ def stage_win(judge, scaffold: Scaffold, fable_a: str, fable_b: str) -> str:
 
 def win_rate_table(judge, scaffolds: list[Scaffold], stage_a: str,
                    fables_a: list[str], stage_b: str,
-                   fables_b: list[str]) -> dict:
+                   fables_b: list[str], *, hashes: list[str] | None = None,
+                   log_path: Path | None = None,
+                   on_progress=None) -> dict:
     """Tally wins/ties/skips of stage_a vs stage_b over aligned per-Scaffold
     completions. Degenerate pairs (empty or identical) the Judge cannot compare
-    are skipped, not counted as ties."""
+    are skipped, not counted as ties.
+
+    With log_path (and hashes), judgments stream to an append-only JSONL: one
+    line per Scaffold as it is judged, fsynced, so a killed run resumes from
+    the next unjudged Scaffold instead of re-paying the judged ones. Lines are
+    validated against hashes positionally — a mismatch means the Scaffold set
+    changed and the log cannot be trusted."""
     if not (len(scaffolds) == len(fables_a) == len(fables_b)):
         raise ValueError("scaffolds and both fable lists must align")
-    wins_a = wins_b = ties = skipped = judge_error = 0
-    for scaffold, fa, fb in zip(scaffolds, fables_a, fables_b):
-        if _degenerate(fa, fb):
-            skipped += 1
-            continue
-        try:
-            outcome = stage_win(judge, scaffold, fa, fb)
-        except JudgeOutputError:
-            # One malformed real-Judge verdict must not abort the whole eval
-            # after all generation (mirrors pref_data.label_scaffold). Count it
-            # and move on; it is neither a win nor a genuine tie.
-            judge_error += 1
-            continue
-        if outcome == "a":
-            wins_a += 1
-        elif outcome == "b":
-            wins_b += 1
-        else:
-            ties += 1
-    return {"stage_a": stage_a, "stage_b": stage_b, "wins_a": wins_a,
-            "wins_b": wins_b, "ties": ties, "skipped": skipped,
-            "judge_error": judge_error, "n": len(scaffolds)}
+
+    outcomes: list[str] = []
+    if log_path is not None:
+        if hashes is None or len(hashes) != len(scaffolds):
+            raise ValueError("streaming judgments require aligned hashes")
+        for i, record in enumerate(_read_jsonl_lines(log_path)):
+            if i >= len(hashes) or record["prompt_hash"] != hashes[i]:
+                raise ValueError(
+                    f"{log_path} does not match the eval Scaffold set; "
+                    f"remove the stale judgments to re-judge"
+                )
+            outcomes.append(record["outcome"])
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_path.open("a", encoding="utf-8") if log_path else None
+    try:
+        for i in range(len(outcomes), len(scaffolds)):
+            fa, fb = fables_a[i], fables_b[i]
+            if _degenerate(fa, fb):
+                outcome = "skipped"
+            else:
+                try:
+                    outcome = stage_win(judge, scaffolds[i], fa, fb)
+                except JudgeOutputError:
+                    # One malformed real-Judge verdict must not abort the whole
+                    # eval after all generation (mirrors
+                    # pref_data.label_scaffold). Count it and move on; it is
+                    # neither a win nor a genuine tie.
+                    outcome = "judge_error"
+            outcomes.append(outcome)
+            if log_file is not None:
+                log_file.write(json.dumps(
+                    {"prompt_hash": hashes[i], "outcome": outcome}) + "\n")
+                log_file.flush()
+                os.fsync(log_file.fileno())
+            if on_progress is not None:
+                on_progress()
+    finally:
+        if log_file is not None:
+            log_file.close()
+
+    return {"stage_a": stage_a, "stage_b": stage_b,
+            "wins_a": outcomes.count("a"), "wins_b": outcomes.count("b"),
+            "ties": outcomes.count("tie"), "skipped": outcomes.count("skipped"),
+            "judge_error": outcomes.count("judge_error"),
+            "n": len(scaffolds)}
 
 
 def all_pairwise_win_rates(judge, scaffolds: list[Scaffold],
-                           stage_fables: dict[str, list[str]]) -> list[dict]:
-    """A win_rate_table for every unordered stage pair, in stage_fables order."""
+                           stage_fables: dict[str, list[str]], *,
+                           hashes: list[str] | None = None,
+                           out_dir: Path | None = None,
+                           on_progress=None) -> list[dict]:
+    """A win_rate_table for every unordered stage pair, in stage_fables order.
+    With out_dir, each pairing streams its judgments to a resumable log."""
     names = list(stage_fables)
-    return [win_rate_table(judge, scaffolds, a, stage_fables[a],
-                           b, stage_fables[b])
+    return [win_rate_table(
+                judge, scaffolds, a, stage_fables[a], b, stage_fables[b],
+                hashes=hashes,
+                log_path=_judgments_path(out_dir, a, b) if out_dir else None,
+                on_progress=on_progress)
             for a, b in itertools.combinations(names, 2)]
 
 
@@ -267,10 +350,25 @@ def _encode_eval_tokens(tokenizer, rows: list[dict]) -> list[int]:
     return ids
 
 
-def run(config: dict, *, generate_fn=None) -> dict:
+def run(config: dict, *, resume: bool = False, generate_fn=None,
+        judge_factory=None) -> dict:
     load_env()  # HF token for hub fetch/sync — never printed
     out_dir = Path(config["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
+    hub_target = config.get("hub", {}).get("target")
+    if resume:
+        # Fresh VM: pull a prior session's partial completions/judgments.
+        if hub_target and not (out_dir / "judgments").exists():
+            try:
+                fetch_from(hub_target, out_dir)
+            except Exception as err:  # noqa: BLE001 — first run: repo may not exist yet
+                warnings.warn(
+                    f"could not fetch a prior eval run from {hub_target!r}; "
+                    f"starting fresh: {err}", stacklevel=2)
+    else:
+        # A fresh run must never silently reuse stale resume state.
+        shutil.rmtree(out_dir / "judgments", ignore_errors=True)
+        shutil.rmtree(out_dir / "completions", ignore_errors=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     data = config["data"]
@@ -294,12 +392,48 @@ def run(config: dict, *, generate_fn=None) -> dict:
     seeds = [scaffold_seed(sampling["seed"], row["prompt_hash"]) for row in rows]
 
     stage_models = {s["name"]: load_stage_model(s, device) for s in config["stages"]}
-    stage_fables = generate_all_stages(
-        stage_models, tokenizer, scaffolds, seeds, sampling,
-        device=device, generate_fn=generate_fn)
+    hashes = [row["prompt_hash"] for row in rows]
+    gen = generate_fn or generate_stage_fables
+    stage_fables: dict[str, list[str]] = {}
+    for name, model in stage_models.items():
+        cached = _load_cached_fables(out_dir, name, hashes)
+        if cached is not None:
+            stage_fables[name] = cached
+            continue
+        stage_fables[name] = gen(model, tokenizer, scaffolds, seeds, sampling,
+                                 device=device)
+        _store_fables(out_dir, name, hashes, stage_fables[name])
+        if hub_target:
+            try_sync_to(hub_target, out_dir)
 
-    judge = build_judge(config["judge"])
-    win_rates = all_pairwise_win_rates(judge, scaffolds, stage_fables)
+    judge = (judge_factory or build_judge)(config["judge"])
+    meta_path = out_dir / "judgments" / "meta.json"
+    if meta_path.exists():
+        recorded = json.loads(meta_path.read_text(encoding="utf-8"))
+        if recorded["eval_judge_id"] != judge.judge_id:
+            raise ValueError(
+                f"resuming with a different judge: the logged judgments were "
+                f"made by {recorded['eval_judge_id']!r} but the config builds "
+                f"{judge.judge_id!r}; remove {meta_path.parent} to re-judge"
+            )
+    else:
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = meta_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"eval_judge_id": judge.judge_id}),
+                       encoding="utf-8")
+        tmp.replace(meta_path)
+
+    judged = {"count": 0}
+    sync_every = config.get("sync_every", 25)
+
+    def on_progress() -> None:
+        judged["count"] += 1
+        if hub_target and judged["count"] % sync_every == 0:
+            try_sync_to(hub_target, out_dir)
+
+    win_rates = all_pairwise_win_rates(judge, scaffolds, stage_fables,
+                                       hashes=hashes, out_dir=out_dir,
+                                       on_progress=on_progress)
 
     metrics_cfg = config.get("metrics", {})
     sample_size = metrics_cfg.get("self_bleu_sample_size") or None
@@ -331,7 +465,6 @@ def run(config: dict, *, generate_fn=None) -> dict:
                                           encoding="utf-8")
     (out_dir / "report.md").write_text(render_report(results, sheet),
                                        encoding="utf-8")
-    hub_target = config.get("hub", {}).get("target")
     if hub_target:
         try_sync_to(hub_target, out_dir)
     print(f"eval done: {len(rows)} Scaffolds, {len(stage_models)} stages, "
@@ -342,8 +475,12 @@ def run(config: dict, *, generate_fn=None) -> dict:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="reuse cached completions and logged judgments "
+                             "from an interrupted eval in out_dir (fetched "
+                             "from [hub].target on a fresh VM)")
     args = parser.parse_args(argv)
-    run(load_config(args.config))
+    run(load_config(args.config), resume=args.resume)
 
 
 if __name__ == "__main__":

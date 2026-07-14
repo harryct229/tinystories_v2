@@ -69,8 +69,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.skip_eval:
         print("[eval_colab] --skip-eval: inputs ready; skipping eval")
         return
-    print("[eval_colab] starting evaluation (ts2-eval)")
-    eval.run(load_config(args.eval_config))
+    print("[eval_colab] starting evaluation (ts2-eval --resume)")
+    # resume=True: reuse cached completions and logged judgments from a prior
+    # preempted session (fetched from [hub].target on a fresh VM).
+    eval.run(load_config(args.eval_config), resume=True)
     print("[eval_colab] done: results.json + report.md written")
 
 
