@@ -1,6 +1,6 @@
 # 06 — GRPO stage: RL against the Reward Model
 
-Status: ready-for-agent
+Status: complete — real run done 2026-07-14: 300 steps, final reward 5.226, KL 0.039; model at hf://congthanh991/tinystories-v2-grpo
 
 ## Parent
 

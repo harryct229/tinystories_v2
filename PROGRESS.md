@@ -46,16 +46,17 @@ _Last updated: 2026-07-13_
   policy prefers chosen over rejected). Model on the private Hub
   (`congthanh991/tinystories-v2-dpo`) — a drop-in third model for the eval
   suite (07) alongside SFT and, later, GRPO.
-- ✅ **Issue 06 (GRPO stage) code complete.** Hand-written group-relative PPO
-  loss + KL leash to a frozen SFT reference (ADR-0004/0005/0006), the reward
-  gate enforced before any model loads, the rollout→reward→advantage→update
-  loop, kill-and-resume, an eval-suite drop-in checkpoint, and the turnkey
-  Colab bootstrap — all tests green. The real run needs only the SFT
-  checkpoint (03), the gate-passing Reward Model (05), and the pref split
-  (01) — all three are already on the Hub, so the real run is fully
-  unblocked.
-- 🟢 Highest-leverage grabs now: **the real GRPO run (06)** — fully unblocked
-  — plus **09** (ablation) and the real eval run (07).
+- ✅ **Issue 06 (GRPO) DONE — real run complete.** 300 GRPO steps on Colab L4
+  (8 prompts × G=8 rollouts × 384 tokens, clip 0.2, KL β=0.03, LR 2e-6):
+  **final mean reward 5.226, final KL 0.039** — the leash held, no diversity
+  collapse flagged. Model on the private Hub (`congthanh991/tinystories-v2-grpo`,
+  W&B run `grpo`). The full InstructGPT recipe is now real end-to-end:
+  pretrain → SFT → labels → RM (gate passed) → GRPO. Ops notes: two run-killers
+  fixed in flight — the runner watchdog now watches artifact mtimes (GRPO
+  prints nothing per-step), and Hub Xet downloads (which hung on 359MB blobs)
+  are disabled on VMs (`HF_HUB_DISABLE_XET=1`).
+- 🟢 Highest-leverage grabs now: **the real eval run (07)** — all four models
+  on Hub — and **09** (ablation).
 
 ## Issue board
 
@@ -72,7 +73,7 @@ _Last updated: 2026-07-13_
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ complete — 8,984 real pairs on Hub (margin judge) |
 | 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | ✅ code complete (real run needs stage checkpoints on Hub) |
-| 06 | GRPO stage | 05 ✅, 11 ✅ | ✅ code complete — real run fully unblocked (SFT/RM/pref split on Hub) |
+| 06 | GRPO stage | 05 ✅, 11 ✅ | ✅ complete — RLAIF model on Hub (reward 5.23, KL 0.039) |
 
 Production-run gates (beyond code): all cleared for 06 — the SFT checkpoint,
 8,984 labeled pairs, and a gate-passing Reward Model (73.9% ≥ ~68%) are on
@@ -86,11 +87,22 @@ the Hub. 07/08 real runs are likewise fully unblocked.
 | W2 | Pretraining runs | ✅ done 2026-07-12 — final loss 1.279, well ahead of schedule |
 | W3 | SFT | issue 12 ✅ + SFT (03) done 2026-07-12 — real run complete, final loss 1.083, model on Hub |
 | W4–5 | Judge labeling, Reward Model + gate | ✅ done 2026-07-13 — 8,984 pairs + RM on Hub, gate passed (73.9% ≥ 68%), a week+ ahead |
-| W5–6 | GRPO (fallback decision point mid-W5) | issue 06 ✅ code complete 2026-07-13 — real run unblocked (SFT/RM/pref split on Hub); DPO fallback (08) already banked |
+| W5–6 | GRPO (fallback decision point mid-W5) | ✅ done 2026-07-14 — RLAIF model on Hub (reward 5.23, KL 0.039); DPO (08) banked too — ~2 weeks ahead |
 | W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
 
 ## Log
 
+- **2026-07-14** — **Issue 06 real GRPO run complete — the RLAIF model
+  exists.** 300 steps (8 prompts × G=8 × 384 tokens, clip 0.2, KL β=0.03,
+  LR 2e-6, ~60s/step on L4): final mean reward **5.226**, final KL **0.039**;
+  artifact on the Hub (`tinystories-v2-grpo`: step_000300.pt, manifest with
+  gate provenance; W&B run `grpo`). Two infrastructure faults diagnosed and
+  fixed during the run: (1) the supervised-runner watchdog killed healthy
+  training because GRPO prints nothing per-step — staleness is now judged on
+  metrics/checkpoint mtimes; (2) Hub Xet-backed downloads hung indefinitely
+  on the 359MB SFT checkpoint — VMs now set `HF_HUB_DISABLE_XET=1` (20s
+  download vs 25-min hang). Cost ≈ 7 L4-h incl. the debugging. Next: the
+  four-model eval run (07).
 - **2026-07-13** — Issue 06 (GRPO stage) code complete: `grpo.py` stage
   (`ts2-grpo`) — a hand-written group-relative PPO loss (group-mean baseline,
   no value network, ADR-0006) with a KL leash to a frozen SFT reference
