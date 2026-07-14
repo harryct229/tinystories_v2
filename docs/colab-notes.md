@@ -72,3 +72,30 @@ SFT run: 800 steps on an L4, model at `hf://congthanh991/tinystories-v2-sft`.)
 - **Always stop the VM.** `colab stop -s <name>` when done, or verify
   `colab sessions` shows nothing. A reaped session lingers as an orphan `[?]`
   (already released; `colab stop` on it says "not found").
+
+## Hub downloads: Xet is unreliable, and `HF_HUB_DISABLE_XET=1` is not a
+   complete fix (issue 07 eval run, 2026-07-14)
+
+- **Symptoms seen:** Xet-backed downloads hung indefinitely on a 359MB
+  checkpoint (fixed once by setting `HF_HUB_DISABLE_XET=1`); later, a
+  *different* download (a `transformers.from_pretrained` sharded checkpoint
+  fetch) still routed through Xet and 403'd on an expired presigned
+  `xet-bridge` URL — with `HF_HUB_DISABLE_XET=1` set in the same process.
+- **Why the env var alone isn't enough:** `HF_HUB_DISABLE_XET` is read by
+  `huggingface_hub.file_download`'s own `hf_hub_download`/`snapshot_download`
+  path, but not every caller goes through that exact function — a sharded
+  `from_pretrained` load can route through a different internal path that
+  doesn't consult the same flag. Verifying `is_xet_available()` returns
+  `False` in a standalone script on the VM is not proof every download in
+  the actual job respects it.
+- **The reliable fix: make Xet physically unavailable.**
+  `pip uninstall -qy hf-xet hf_xet` (and `rm -rf
+  /root/.cache/huggingface/xet` to clear any stale cached state) right after
+  installing the package's extras, before running the stage. With the
+  package gone, `is_package_available("hf_xet")` is `False` everywhere,
+  independent of which code path checks it.
+- Plain-HTTP fallback downloads at ~18 MB/s (not the ~100 MB/s Xet promises
+  when it works) — a 16GB judge model takes ~15 min. Budget for it; a
+  resumable stage (cached completions, streamed judgments — see
+  `eval.py`'s `resume=True`) matters more than raw download speed once Xet
+  is out of the picture.
