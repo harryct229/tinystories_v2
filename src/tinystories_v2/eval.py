@@ -103,9 +103,17 @@ def _judgments_path(out_dir: Path, stage_a: str, stage_b: str) -> Path:
 def stage_win(judge, scaffold: Scaffold, fable_a: str, fable_b: str) -> str:
     """Order-swapped double judging of two stages' fables for one Scaffold.
 
-    Returns "a"/"b" only when the same candidate is preferred under both
-    presentation orders (position bias cancels); otherwise "tie". Assumes
+    Margin judges decide by the sign of their debiased logit margin, with
+    |margin| at or below the judge's threshold a "tie" (greedy A/B verdicts
+    saturate by position for close candidates — the first real Llama eval
+    decided 0 of 1,200 comparisons). Verdict judges return "a"/"b" only when
+    the same candidate is preferred under both presentation orders. Assumes
     non-degenerate candidates — callers skip degenerate pairs first."""
+    if hasattr(judge, "margin"):
+        margin = judge.margin(scaffold, fable_a, fable_b)
+        if abs(margin) <= judge.margin_threshold:
+            return "tie"
+        return "a" if margin > 0 else "b"
     first = judge.compare(scaffold, fable_a, fable_b)
     swapped = judge.compare(scaffold, fable_b, fable_a)
     if first is Verdict.A and swapped is Verdict.B:

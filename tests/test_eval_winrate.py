@@ -68,3 +68,34 @@ def test_all_pairwise_win_rates_covers_each_unordered_stage_pair():
     tables = all_pairwise_win_rates(SlotCoverageFakeJudge(), scaffolds, stage_fables)
     pairs = {(t["stage_a"], t["stage_b"]) for t in tables}
     assert pairs == {("base", "sft"), ("base", "rlaif"), ("sft", "rlaif")}
+
+
+class _StubMarginJudge:
+    """Margin-capable judge: stage_win must dispatch on margin(), not
+    compare() (greedy verdicts saturate by position — the real Llama run
+    decided 0 of 1,200 comparisons)."""
+
+    judge_id = "stub-margin:tau=0.5"
+    margin_threshold = 0.5
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def margin(self, scaffold, fable_a, fable_b) -> float:
+        return self.value
+
+    def compare(self, scaffold, fable_a, fable_b):
+        raise AssertionError("margin judges must not fall back to compare()")
+
+
+def test_stage_win_dispatches_margin_judges():
+    from tinystories_v2.eval import stage_win
+    from tinystories_v2.slots import Scaffold
+    scaffold = Scaffold(character="fox", trait="greedy",
+                        setting="a dense forest",
+                        conflict="loses food to a trick",
+                        resolution="the trickster is exposed",
+                        moral="honesty is the best policy")
+    assert stage_win(_StubMarginJudge(2.0), scaffold, "Alpha.", "Beta.") == "a"
+    assert stage_win(_StubMarginJudge(-2.0), scaffold, "Alpha.", "Beta.") == "b"
+    assert stage_win(_StubMarginJudge(0.1), scaffold, "Alpha.", "Beta.") == "tie"
