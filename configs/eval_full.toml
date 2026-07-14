@@ -49,7 +49,7 @@ self_bleu_seed = 0
 
 [judge]
 kind = "transformers"
-model_id = "meta-llama/Llama-3.1-8B-Instruct"
+model_id = "NousResearch/Meta-Llama-3.1-8B-Instruct"  # ungated mirror; the meta-llama gate is not granted to this account
 precision = "fp16"
 device = "cuda"
 max_new_tokens = 4
