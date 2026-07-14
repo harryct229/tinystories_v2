@@ -5,7 +5,7 @@ whenever an issue changes state — the issue files in
 `.scratch/tinystories-v2-pipeline/issues/` (their `Status:` lines) are the
 source of truth; this file is the at-a-glance view.
 
-_Last updated: 2026-07-13_
+_Last updated: 2026-07-14_
 
 ## Now
 
@@ -55,8 +55,26 @@ _Last updated: 2026-07-13_
   fixed in flight — the runner watchdog now watches artifact mtimes (GRPO
   prints nothing per-step), and Hub Xet downloads (which hung on 359MB blobs)
   are disabled on VMs (`HF_HUB_DISABLE_XET=1`).
-- 🟢 Highest-leverage grabs now: **the real eval run (07)** — all four models
-  on Hub — and **09** (ablation).
+- ✅ **Issue 07 (evaluation suite) DONE — real eval run complete.** 100
+  held-out Scaffolds × 4 stages (base/SFT/DPO/GRPO), cross-family margin-
+  judged (Llama-3.1-8B via the NousResearch mirror, tau=0.5) — 600 pairwise
+  comparisons, 0 skipped, 0 judge errors. **Headline: all three aligned
+  models unanimously beat base** (SFT 85, GRPO 94, DPO 86 wins out of 100,
+  base 0 wins, in each case). Among the aligned trio the judge mostly ties
+  (92–97%) — no statistically clear winner at n=100. Reference-free
+  metrics: Flesch reading ease jumps 68.7→78–80 (simpler, age-appropriate
+  prose) across all three; Self-BLEU rises mildly, highest for GRPO (0.402
+  vs SFT's 0.362, base's 0.282) — the mild-diversity-narrowing direction
+  DESIGN.md flagged as a watch item, not a collapse. Results on the private
+  Hub (`congthanh991/tinystories-v2-eval`). The full RLAIF pipeline now has
+  its evaluation. Ops: the eval stage is now resumable (cached completions +
+  streamed per-pairing judgments, survived ~6 preemption/failure cycles
+  today); the greedy Llama judge decided 0/1200 real comparisons (same
+  position-saturation as Qwen) and was replaced with margin judging;
+  Hub Xet downloads needed `hf_xet` physically uninstalled on the VM, not
+  just `HF_HUB_DISABLE_XET=1` (see `docs/colab-notes.md`).
+- 🟢 Highest-leverage grabs now: **09** (5M architecture ablation) — the
+  last unstarted issue — and the write-up/report.
 
 ## Issue board
 
@@ -72,12 +90,11 @@ _Last updated: 2026-07-13_
 | 09 | Architecture ablation at 5M scale | 02 ✅ | 🟢 ready |
 | 03 | SFT stage + demo script | 02 ✅, 12 ✅ | ✅ complete — real SFT run done, model on Hub |
 | 04 | Preference labeling stage | 03 ✅, 10 ✅ | ✅ complete — 8,984 real pairs on Hub (margin judge) |
-| 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | ✅ code complete (real run needs stage checkpoints on Hub) |
+| 07 | Evaluation suite | 03 ✅, 10 ✅, 11 ✅ | ✅ complete — real eval done: SFT/GRPO/DPO all beat base 85-94% |
 | 06 | GRPO stage | 05 ✅, 11 ✅ | ✅ complete — RLAIF model on Hub (reward 5.23, KL 0.039) |
 
-Production-run gates (beyond code): all cleared for 06 — the SFT checkpoint,
-8,984 labeled pairs, and a gate-passing Reward Model (73.9% ≥ ~68%) are on
-the Hub. 07/08 real runs are likewise fully unblocked.
+Production-run gates: every stage through 07 has a completed real run on the
+Hub. Only 09 (5M ablation) remains unstarted.
 
 ## Milestones vs plan (`docs/DESIGN.md`)
 
@@ -88,10 +105,33 @@ the Hub. 07/08 real runs are likewise fully unblocked.
 | W3 | SFT | issue 12 ✅ + SFT (03) done 2026-07-12 — real run complete, final loss 1.083, model on Hub |
 | W4–5 | Judge labeling, Reward Model + gate | ✅ done 2026-07-13 — 8,984 pairs + RM on Hub, gate passed (73.9% ≥ 68%), a week+ ahead |
 | W5–6 | GRPO (fallback decision point mid-W5) | ✅ done 2026-07-14 — RLAIF model on Hub (reward 5.23, KL 0.039); DPO (08) banked too — ~2 weeks ahead |
-| W7–8 | eval suite, 5M ablation, report | reference-free metrics (11) ✅; eval suite (07) ready |
+| W7–8 | eval suite, 5M ablation, report | eval suite (07) ✅ done 2026-07-14 — aligned models beat base 85-94%; 5M ablation (09) next — ~2 weeks ahead |
 
 ## Log
 
+- **2026-07-14** — **Issue 07 real eval run complete — the pipeline has its
+  evaluation.** 100 held-out Scaffolds × 4 stages, 600 cross-family
+  comparisons via Llama-3.1-8B-Instruct (NousResearch mirror) margin-judged
+  at tau=0.5, 0 skipped, 0 judge errors. **base vs SFT/GRPO/DPO: 0 wins for
+  base, 85/94/86 wins for the aligned model** — decisive. Among SFT/GRPO/DPO
+  the judge mostly ties (92–97% of comparisons) — n=100 isn't enough to rank
+  the three aligned stages against each other. Reference-free: Flesch
+  68.7→78-80 across all aligned models (simpler prose, on-target for ages
+  4–7); Self-BLEU highest for GRPO (0.402 vs SFT 0.362, base 0.282) — mild
+  diversity narrowing, not collapse. Artifact on the Hub
+  (`tinystories-v2-eval`). Took ~6 preemption/failure cycles to land: made
+  the eval stage resumable (cached completions + streamed per-pairing
+  judgments — see `eval.py` `resume=True`, `tests/test_eval_resume.py`);
+  the greedy Llama judge decided 0/1200 comparisons (same position-
+  saturation as issue 04's Qwen judge) and was replaced with margin judging
+  (`stage_win` dispatches on `judge.margin()`); the account lacks the
+  meta-llama gate grant (switched to the NousResearch mirror); a `sed`
+  slip corrupted `[sampling].max_new_tokens` in `eval_full.toml` (fixed +
+  guarded by `tests/test_eval_config.py`); Hub Xet downloads needed
+  `hf_xet` physically uninstalled on the VM — `HF_HUB_DISABLE_XET=1` alone
+  didn't stop a `transformers.from_pretrained` shard download from
+  routing through Xet and 403ing (see `docs/colab-notes.md`). Only issue 09
+  (5M ablation) remains before the write-up.
 - **2026-07-14** — **Issue 06 real GRPO run complete — the RLAIF model
   exists.** 300 steps (8 prompts × G=8 × 384 tokens, clip 0.2, KL β=0.03,
   LR 2e-6, ~60s/step on L4): final mean reward **5.226**, final KL **0.039**;

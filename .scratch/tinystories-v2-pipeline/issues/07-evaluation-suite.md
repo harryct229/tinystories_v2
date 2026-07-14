@@ -1,6 +1,6 @@
 # 07 — Evaluation suite: cross-family win-rates, reference-free metrics, sample sheet
 
-Status: ready-for-agent
+Status: complete — real run done 2026-07-14: base vs SFT/GRPO/DPO win rates 85/94/86 (of 100, base 0); artifact at hf://congthanh991/tinystories-v2-eval
 
 ## Parent
 
@@ -30,11 +30,11 @@ stage checkpoint side by side, exported in a report-pastable format.
 
 ## Acceptance criteria
 
-- [ ] Eval stage runs on CPU with the fake Judge and toy checkpoints, producing a results artifact with win-rate tables (with counts), metric tables, and the sample sheet
-- [ ] Eval judge is config-selected via the Judge interface; a test guards that the eval-judge identity is recorded in the results artifact (so "who judged" is never ambiguous in the report)
-- [ ] Comparisons use identical Scaffolds and sampling settings across checkpoints, asserted by a test
-- [ ] Works with only base+SFT present; RLAIF column appears when a third checkpoint is configured
-- [ ] Thin Colab notebook exists for the real eval run
+- [x] Eval stage runs on CPU with the fake Judge and toy checkpoints, producing a results artifact with win-rate tables (with counts), metric tables, and the sample sheet — `tests/test_eval_stage.py`
+- [x] Eval judge is config-selected via the Judge interface; a test guards that the eval-judge identity is recorded in the results artifact — `tests/test_eval_stage.py`; real run recorded `transformers-margin:NousResearch/Meta-Llama-3.1-8B-Instruct;precision=fp16;tau=0.5;rubric=fable-pairwise-v1`
+- [x] Comparisons use identical Scaffolds and sampling settings across checkpoints, asserted by a test — `tests/test_eval_stage.py::test_identical_scaffolds_and_sampling_across_stages`
+- [x] Works with only base+SFT present; RLAIF column appears when a third checkpoint is configured — `tests/test_eval_stage.py::test_rlaif_column_appears_only_with_a_third_stage`; the real run used four (base/SFT/GRPO/DPO)
+- [x] Thin Colab notebook exists for the real eval run — `notebooks/eval_colab.ipynb` (+ `scripts/eval_colab.py` bootstrap, now resumable)
 
 ## Blocked by
 
