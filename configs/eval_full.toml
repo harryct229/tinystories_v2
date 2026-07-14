@@ -6,7 +6,7 @@
 # each [[stages]].hub_source. The RLAIF stage below is wired to the GRPO
 # artifact (artifacts/grpo_full / hf://congthanh991/tinystories-v2-grpo).
 out_dir = "artifacts/eval_full"
-max_eval_scaffolds = 200       # cap so a run finishes within an L4 session
+max_eval_scaffolds = 100       # halved 2026-07-14: fit inside todays ~40-min preemption windows
 sample_sheet_k = 8
 
 [data]
